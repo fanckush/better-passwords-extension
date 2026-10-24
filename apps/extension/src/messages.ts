@@ -25,7 +25,7 @@ export type Request =
   | { type: "menu-resize"; nonce: string; height: number }
   | { type: "menu-close"; nonce: string }
   | { type: "menu-focus-field"; nonce: string }
-  /** Two fresh strong passwords for the new-password field the menu was opened on. */
+  /** A strong password and, when allowed, an alphanumeric alternative for the new-password field. */
   | { type: "generate-passwords"; nonce: string }
   /** Fills the chosen password; Apple Passwords is asked to save it when the form is submitted. */
   | { type: "use-generated-password"; nonce: string; style: PasswordStyle }
@@ -59,7 +59,9 @@ export type Request =
   /** The username next to a password we generated (as it's typed). */
   | { type: "generated-username"; username: string }
   /** The field holding a password we generated went away (a dialog closed, a step moved on). */
-  | { type: "generated-form-gone"; username: string };
+  | { type: "generated-form-gone"; username: string }
+  /** Opens Apple's own password creation UI, with this tab's site prefilled when supported. */
+  | { type: "open-password-creation"; nonce: string };
 
 /** Requests content scripts are allowed to send. */
 export const CONTENT_SCRIPT_REQUESTS: ReadonlySet<Request["type"]> = new Set([
@@ -90,7 +92,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  lockOnScreenLock: false,
+  lockOnScreenLock: true,
   inlineMenu: true,
   touchId: true,
   generatePasswords: true,
@@ -135,7 +137,7 @@ export interface AutofillStatus {
 
 export interface GeneratedPasswords {
   strong: string;
-  alphanumeric: string;
+  alphanumeric?: string;
   /**
    * The account they'd be saved for when the form has no username (a password reset): the login
    * just chosen on this site, or its only one. macOS's save prompt has the final say.
@@ -204,6 +206,7 @@ interface Responses {
   "open-passwords-app": null;
   "generated-username": null;
   "generated-form-gone": null;
+  "open-password-creation": null;
 }
 
 export type Response<R extends Request> = R["type"] extends keyof Responses ? Responses[R["type"]] : Status;

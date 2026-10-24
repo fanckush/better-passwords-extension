@@ -4,7 +4,7 @@ Apple doesn't document this protocol. What follows was learned from earlier open
 
 ## Transport
 
-Chrome native messaging: every message is a 32-bit little-endian length followed by UTF-8 JSON. Replies echo the request's `cmd` and carry **no correlation id**, so the client never has two requests with the same `cmd` waiting at once: listing logins, pairing and saving each queue on their own, and a new password read replaces one still waiting (a dismissed Touch ID prompt leaves it unanswered). A password reply is used only if its `USR` is the login asked for, in case a replaced read's answer arrives late.
+Chrome native messaging: every message is a 32-bit little-endian length followed by UTF-8 JSON. Replies echo the request's `cmd` and carry **no correlation id**, so the client never has two requests with the same `cmd` waiting at once: listing logins, pairing and saving each queue on their own, and a new password read replaces one still waiting (a dismissed Touch ID prompt leaves it unanswered). A password reply is used only if its username and authenticated `sites` match the request. Login lists are filtered by the requested site too. Password choices have a local sequence so an earlier encryption cannot overtake a later choice. Locking invalidates in-flight work, including a reply already being decrypted.
 
 ## Commands
 
@@ -14,7 +14,7 @@ Chrome native messaging: every message is a 32-bit little-endian length followed
 | 2 | Handshake: `msg.QID` is `m0` (client hello) or `m2` (client proof) |
 | 4 | List login names for a URL (encrypted) |
 | 5 | Get the password for a login name (encrypted; may trigger Touch ID) |
-| 13 | Open the Passwords app; optional `searchQueryURL` (an http(s) URL) searches for that site. Plain, needs no pairing, no reply |
+| 13 | Open the Passwords app; optional `searchQueryURL` searches for a web address. If `canOpenPasswordsAppToNewPasswordSheet` is true, `newPasswordWithSuggestedURL` opens native creation instead. Plain, needs no pairing, no reply |
 | 9 / 10 | From the helper: passwords disabled / re-login needed, so drop the session |
 | 0 | End |
 

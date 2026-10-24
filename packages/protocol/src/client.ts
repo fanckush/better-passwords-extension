@@ -105,6 +105,8 @@ export class ApplePasswordsClient {
   /** One queue per kind of request (see #serialized). */
   #queues = new Map<string, Promise<unknown>>();
   #stateListeners = new Set<(state: ClientState) => void>();
+  #generation = 0;
+  #passwordRead = 0;
 
   readonly #options: Required<ClientOptions>;
 
@@ -157,6 +159,8 @@ export class ApplePasswordsClient {
   requestChallenge(): Promise<void> {
     return this.#serialized("pairing", async () => {
       this.#assertOpen();
+      this.#lock();
+      const generation = this.#generation;
       const username = this.#codec.encode(randomBytes(16));
       const srp = new SrpClient(username);
       const reply = await this.#request({
@@ -174,6 +178,7 @@ export class ApplePasswordsClient {
         },
       });
 
+      this.#assertGeneration(generation);
       const exchange = pake.decode<ServerKeyExchange>(requireString(reply.payload?.PAKE));
       if (exchange.TID !== username) throw invalid("challenge for another session");
       if (exchange.ErrCode !== undefined) throw invalid(`helper refused pairing (${exchange.ErrCode})`);
@@ -198,6 +203,7 @@ export class ApplePasswordsClient {
   verifyCode(code: string): Promise<void> {
     return this.#serialized("pairing", async () => {
       this.#assertOpen();
+      const generation = this.#generation;
       const challenge = this.#challenge;
       if (!challenge || !this.hasLiveChallenge) {
         throw new ProtocolError("the code expired, request a new one", "challenge-expired");
@@ -207,6 +213,7 @@ export class ApplePasswordsClient {
       this.#setState("locked");
 
       const handshake = await challenge.srp.handshake(code, challenge.B, challenge.salt);
+      this.#assertGeneration(generation);
       const reply = await this.#request({
         cmd: Command.Handshake,
         msg: {
@@ -219,6 +226,7 @@ export class ApplePasswordsClient {
         },
       });
 
+      this.#assertGeneration(generation);
       const verification = pake.decode<ServerVerification>(requireString(reply.payload?.PAKE));
       if (verification.TID !== this.#username) throw invalid("verification for another session");
       if (verification.MSG !== PakeMessage.ServerVerification) throw invalid("unexpected handshake message");
@@ -232,7 +240,9 @@ export class ApplePasswordsClient {
         throw new ProtocolError("helper's proof did not match", "server-proof-mismatch");
       }
 
-      this.#channel = await SecureChannel.fromSessionKey(handshake.sessionKey);
+      const channel = await SecureChannel.fromSessionKey(handshake.sessionKey);
+      this.#assertGeneration(generation);
+      this.#channel = channel;
       this.#setState("unlocked");
     });
   }
@@ -245,7 +255,9 @@ export class ApplePasswordsClient {
         URL: hostname,
       });
       // a login saved without a username may come back without the field at all
-      return (reply.Entries ?? []).map((e) => ({ username: e.USR ?? "", sites: e.sites ?? [] }));
+      return (reply.Entries ?? [])
+        .filter((entry) => entry.sites?.includes(hostname))
+        .map((entry) => ({ username: entry.USR ?? "", sites: entry.sites ?? [] }));
     });
   }
 
@@ -259,6 +271,10 @@ export class ApplePasswordsClient {
     username: string,
     tab: { tabId: number; frameId?: number },
   ): Promise<Credential | undefined> {
+    const read = ++this.#passwordRead;
+    const assertLatest = () => {
+      if (read !== this.#passwordRead) throw new ProtocolError("replaced by a newer request", "superseded");
+    };
     // not serialized: a new read replaces one still waiting (see #request)
     return (async () => {
       const reply = await this.#query(
@@ -267,12 +283,12 @@ export class ApplePasswordsClient {
         tab,
         { ACT: Action.Search, URL: hostname, USR: username },
         null,
+        [],
+        assertLatest,
       );
-      const entry = reply.Entries?.[0];
+      const entry = reply.Entries?.find((entry) => (entry.USR ?? "") === username && entry.sites?.includes(hostname));
+      if (!entry && reply.Entries?.length) throw invalid("reply for another site or login");
       if (!entry || typeof entry.PWD !== "string") return undefined;
-      // Replies carry no id: a late answer to a replaced read could arrive now. Use only the
-      // password of the login asked for.
-      if ((entry.USR ?? "") !== username) throw new ProtocolError("reply for another login", "invalid-reply");
       return { username, password: entry.PWD };
     })();
   }
@@ -281,10 +297,16 @@ export class ApplePasswordsClient {
    * Opens Apple's Passwords app, searching for `url` when it is a web address. Works without
    * pairing, and the helper sends no reply.
    */
-  openPasswordsApp(url?: string): void {
+  openPasswordsApp(url?: string, options: { create?: boolean } = {}): void {
     this.#assertOpen();
-    const message: { cmd: number; searchQueryURL?: string } = { cmd: Command.LaunchPasswordsApp };
-    if (url && /^https?:\/\//.test(url)) message.searchQueryURL = url;
+    const message: { cmd: number; searchQueryURL?: string; newPasswordWithSuggestedURL?: string } = {
+      cmd: Command.LaunchPasswordsApp,
+    };
+    if (url && /^https?:\/\//.test(url)) {
+      if (options.create && this.#capabilities.canOpenPasswordsAppToNewPasswordSheet === true) {
+        message.newPasswordWithSuggestedURL = url;
+      } else message.searchQueryURL = url;
+    }
     this.transport.send(message);
   }
 
@@ -295,17 +317,18 @@ export class ApplePasswordsClient {
    */
   savePassword(login: { hostname: string; username: string; password: string }, tab: Tab): Promise<void> {
     return this.#serialized("save", async () => {
-      this.transport.send(
-        await this.#secureMessage(Command.SetPassword, tab, {
-          ACT: Action.MaybeAdd,
-          URL: "",
-          USR: "",
-          PWD: "",
-          NURL: login.hostname,
-          NUSR: login.username,
-          NPWD: login.password,
-        }),
-      );
+      const generation = this.#generation;
+      const message = await this.#secureMessage(Command.SetPassword, tab, {
+        ACT: Action.MaybeAdd,
+        URL: "",
+        USR: "",
+        PWD: "",
+        NURL: login.hostname,
+        NUSR: login.username,
+        NPWD: login.password,
+      });
+      this.#assertGeneration(generation);
+      this.transport.send(message);
     });
   }
 
@@ -327,9 +350,15 @@ export class ApplePasswordsClient {
     body: Record<string, unknown>,
     timeoutMs?: number | null,
     alsoAccept: readonly number[] = [],
+    assertCurrent: () => void = () => {},
   ): Promise<QueryReply> {
+    const generation = this.#generation;
     const message = { ...(await this.#secureMessage(cmd, tab, body)), url: hostname };
+    this.#assertGeneration(generation);
+    assertCurrent();
     const result = await this.#openReply(await this.#request(message, timeoutMs));
+    this.#assertGeneration(generation);
+    assertCurrent();
 
     if (result.STATUS === QueryStatus.Success || alsoAccept.includes(result.STATUS)) return result;
     if (result.STATUS === QueryStatus.NoResults) return { STATUS: result.STATUS, Entries: [] };
@@ -341,14 +370,17 @@ export class ApplePasswordsClient {
   async #secureMessage(cmd: keyof typeof QueryId, tab: Tab, body: Record<string, unknown>) {
     this.#assertOpen();
     const channel = this.#channel;
+    const generation = this.#generation;
     if (this.#state !== "unlocked" || !channel) throw new ProtocolError("not paired", "closed");
+    const encrypted = await channel.encryptRequest(body);
+    this.#assertGeneration(generation);
     return {
       cmd,
       tabId: tab.tabId,
       frameId: tab.frameId ?? 0,
       payload: {
         QID: QueryId[cmd],
-        SMSG: JSON.stringify({ TID: this.#username, SDATA: this.#codec.encode(await channel.encryptRequest(body)) }),
+        SMSG: JSON.stringify({ TID: this.#username, SDATA: this.#codec.encode(encrypted) }),
       },
     };
   }
@@ -430,20 +462,32 @@ export class ApplePasswordsClient {
   }
 
   #lock(): void {
+    this.#generation++;
     this.#channel = undefined;
     this.#challenge = undefined;
+    this.#cancelWaiters();
     if (this.#state !== "closed") this.#setState("locked");
   }
 
   #closed(error?: string): void {
+    this.#generation++;
     this.#channel = undefined;
     this.#challenge = undefined;
+    this.#cancelWaiters(error);
+    this.#setState("closed");
+  }
+
+  #cancelWaiters(error?: string): void {
     for (const waiter of this.#waiters.values()) {
       clearTimeout(waiter.timer);
       waiter.reject(new ProtocolError(error ?? "connection closed", "closed"));
     }
     this.#waiters.clear();
-    this.#setState("closed");
+  }
+
+  #assertGeneration(generation: number): void {
+    this.#assertOpen();
+    if (generation !== this.#generation) throw new ProtocolError("session ended", "closed");
   }
 
   #assertOpen(): void {

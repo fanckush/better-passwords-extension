@@ -1,3 +1,4 @@
+import { ProtocolError } from "@app/protocol";
 import type { ScriptPublicPath } from "wxt/utils/inject-script";
 import type { FieldKind } from "@/src/autofill/fields.ts";
 import { Companion } from "@/src/companion.ts";
@@ -23,7 +24,7 @@ import {
   type Status,
 } from "@/src/messages.ts";
 import { PortTransport } from "@/src/native/port-transport.ts";
-import { generatePassword } from "@/src/passwords/generate.ts";
+import { generatePassword, PasswordRulesError } from "@/src/passwords/generate.ts";
 import { waitForLogin } from "@/src/passwords/wait-for-login.ts";
 import { Session } from "@/src/session/session.ts";
 import { PendingUpdate } from "@/src/updates.ts";
@@ -51,6 +52,7 @@ interface GeneratedLogin {
   formUsername: string;
   /** Whether Apple Passwords was asked already: once per generated password. */
   asked: boolean;
+  cancellation: AbortController;
 }
 
 export default defineBackground(() => {
@@ -239,6 +241,7 @@ export default defineBackground(() => {
   // Passwords generated for open menus (by tab and menu nonce), and the one filled per tab.
   const generatedForMenu = new Map<string, GeneratedPasswords>();
   const generatedByTab = new Map<number, GeneratedLogin>();
+  const fillChoices = new Map<number, object>();
   // Filled passwords Apple Passwords may not have (not saved yet, declined, or an update that
   // can't be confirmed), kept in memory until the session ends for the popup to show.
   const unconfirmed: { hostname: string; username: string; password: string }[] = [];
@@ -268,11 +271,15 @@ export default defineBackground(() => {
     if (state === "unlocked") return;
     chosenLogins.clear();
     unconfirmed.length = 0;
+    for (const generated of generatedByTab.values()) generated.cancellation.abort();
     generatedByTab.clear();
     generatedForMenu.clear();
+    fillChoices.clear();
   });
   browser.tabs.onRemoved.addListener((tabId) => {
+    generatedByTab.get(tabId)?.cancellation.abort();
     generatedByTab.delete(tabId);
+    fillChoices.delete(tabId);
     menuNonces.delete(tabId);
     for (const key of generatedForMenu.keys()) if (key.startsWith(`${tabId}:`)) generatedForMenu.delete(key);
   });
@@ -301,16 +308,22 @@ export default defineBackground(() => {
     password: string,
     account: string | undefined,
   ): Promise<NewPasswordResult> {
+    const { assertCurrent } = await beginFill(tabId);
     const context = await newPasswordContext(tabId, nonce);
     if (!context.visible) return "menu-hidden";
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
     const fill = { type: "menu-fill-new-password", nonce, origin: url.origin, password } as const;
+    assertCurrent();
     const reply = (await relay(tabId, fill).catch(() => undefined)) as { result: NewPasswordResult } | undefined;
+    assertCurrent();
     const result = reply?.result ?? "no-fields";
     if (result !== "filled") return result;
     const previous = generatedByTab.get(tabId);
-    if (previous) forget(previous.password);
+    if (previous) {
+      previous.cancellation.abort();
+      forget(previous.password);
+    }
     generatedByTab.set(tabId, {
       hostname: url.hostname,
       password,
@@ -318,6 +331,7 @@ export default defineBackground(() => {
       state: "unsaved",
       formUsername: context.username,
       asked: false,
+      cancellation: new AbortController(),
     });
     unconfirmed.push({ hostname: url.hostname, username: context.username || (account ?? ""), password });
     return result;
@@ -354,17 +368,36 @@ export default defineBackground(() => {
     username ||= generated.account ?? "";
     chosenLogins.delete(generated.hostname);
     generated.username = username;
-    const before = await usernamesFor(generated.hostname);
-    const client = await session.unlockedClient();
-    const { hostname, password } = generated;
-    await client.savePassword({ hostname, username, password }, { tabId, frameId: 0 });
-    const tab = tabId;
-    if (username !== "" && before.includes(username)) return markSaved(tab, generated, username, false);
-    const saved = await waitForLogin(() => usernamesFor(hostname), username, before);
-    if (generated.username !== username) return; // a newer submit took over
-    if (saved === undefined) generated.state = "unsaved";
-    // without a username, it's the one the user typed into macOS's Save dialog
-    else markSaved(tab, generated, saved, true);
+    const { signal } = generated.cancellation;
+    try {
+      const client = await session.unlockedClient();
+      const assertCurrent = () => {
+        session.assertCurrent(client);
+        if (signal.aborted || generatedByTab.get(tabId) !== generated) {
+          throw new ProtocolError("generated password expired", "superseded");
+        }
+      };
+      const lookup = async () => {
+        assertCurrent();
+        const logins = await client.getLogins(generated.hostname, PROBE_TAB);
+        assertCurrent();
+        return logins.map((login) => login.username);
+      };
+      const before = await lookup();
+      assertCurrent();
+      const { hostname, password } = generated;
+      await client.savePassword({ hostname, username, password }, { tabId, frameId: 0 });
+      assertCurrent();
+      if (username !== "" && before.includes(username)) return markSaved(tabId, generated, username, false);
+      const saved = await waitForLogin(lookup, username, before, { signal });
+      assertCurrent();
+      if (generated.username !== username) return; // a newer submit took over
+      if (saved === undefined) generated.state = "unsaved";
+      // without a username, it's the one the user typed into macOS's Save dialog
+      else markSaved(tabId, generated, saved, true);
+    } catch {
+      if (!signal.aborted && generatedByTab.get(tabId) === generated) generated.state = "unsaved";
+    }
   }
 
   function markSaved(tabId: number, generated: GeneratedLogin, username: string, confirmed: boolean) {
@@ -554,6 +587,7 @@ export default defineBackground(() => {
         return { result };
       }
       case "generate-passwords": {
+        const client = await session.unlockedClient();
         const tabId = tabOf(caller);
         const context = await newPasswordContext(tabId, request.nonce);
         const url = await tabUrl(tabId);
@@ -563,9 +597,14 @@ export default defineBackground(() => {
         const account = guess ? await accountFor(url.hostname).catch(() => undefined) : undefined;
         const passwords: GeneratedPasswords = {
           strong: generatePassword("strong", context.rules),
-          alphanumeric: generatePassword("alphanumeric", context.rules),
           ...(account ? { account } : {}),
         };
+        try {
+          passwords.alphanumeric = generatePassword("alphanumeric", context.rules);
+        } catch (error) {
+          if (!(error instanceof PasswordRulesError)) throw error;
+        }
+        session.assertCurrent(client);
         generatedForMenu.set(`${tabId}:${request.nonce}`, passwords);
         return passwords;
       }
@@ -573,7 +612,9 @@ export default defineBackground(() => {
         const tabId = tabOf(caller);
         const passwords = generatedForMenu.get(`${tabId}:${request.nonce}`);
         if (!passwords) throw new Error("That password expired. Try again.");
-        return { result: await fillGenerated(tabId, request.nonce, passwords[request.style], passwords.account) };
+        const password = passwords[request.style];
+        if (!password) throw new PasswordRulesError();
+        return { result: await fillGenerated(tabId, request.nonce, password, passwords.account) };
       }
       case "unconfirmed-passwords": {
         const url = await tabUrl(tabOf(caller, request.tabId));
@@ -603,6 +644,13 @@ export default defineBackground(() => {
         const url = tabId === undefined ? undefined : await tabUrl(tabId).catch(() => undefined);
         const client = await session.connect();
         client.openPasswordsApp(url?.origin);
+        return null;
+      }
+      case "open-password-creation": {
+        const url = await tabUrl(tabOf(caller));
+        if (!url) throw new Error("this page can't create a password");
+        const client = await session.connect();
+        client.openPasswordsApp(url.origin, { create: true });
         return null;
       }
       case "menu-resize":
@@ -691,26 +739,38 @@ export default defineBackground(() => {
     username: string,
     fill: (origin: string, password: string | null) => Promise<string>,
   ): Promise<string> {
+    const { client, assertCurrent } = await beginFill(tabId);
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
+    assertCurrent();
     const result = await fill(url.origin, null);
+    assertCurrent();
     if (result === "filled") chosenLogins.set(url.hostname, { username, tabId, at: Date.now() });
     if (result !== "needs-password") return result;
-    // the tab may have moved on meanwhile: the password is for the site it's on now, and only fills there
-    const { url: now, credential } = await credentialFor(tabId, username);
-    const filled = await fill(now.origin, credential.password);
+    const now = await tabUrl(tabId);
+    assertCurrent();
+    if (now?.origin !== url.origin) return "origin-mismatch";
+    const credential = await client.getPassword(url.hostname, username, { tabId });
+    assertCurrent();
+    if (!credential) throw new Error("that login is no longer saved");
+    const filled = await fill(url.origin, credential.password);
+    assertCurrent();
     // signed in: no reset to save for
-    if (filled === "filled") chosenLogins.delete(now.hostname);
+    if (filled === "filled") chosenLogins.delete(url.hostname);
     return filled;
   }
 
-  async function credentialFor(tabId: number, username: string) {
-    const url = await tabUrl(tabId);
-    if (!url) throw new Error("this page can't be filled");
+  /** Both saved and generated fills replace the tab's previous choice before any asynchronous work. */
+  async function beginFill(tabId: number) {
+    const choice = {};
+    fillChoices.set(tabId, choice);
     const client = await session.unlockedClient();
-    const credential = await client.getPassword(url.hostname, username, { tabId });
-    if (!credential) throw new Error("that login is no longer saved");
-    return { url, credential };
+    const assertCurrent = () => {
+      session.assertCurrent(client);
+      if (fillChoices.get(tabId) !== choice) throw new ProtocolError("replaced by a newer choice", "superseded");
+    };
+    assertCurrent();
+    return { client, assertCurrent };
   }
 
   browser.runtime.onMessage.addListener((request: Request & { menuNonce?: unknown }, sender, sendResponse) => {
