@@ -54,6 +54,8 @@ export type Request =
 
   /** Opens Apple's Passwords app, searching for the tab's site when there is one. */
   | { type: "open-passwords-app"; tabId?: number }
+  /** Opens Apple's own password creation UI, with this tab's site prefilled when supported. */
+  | { type: "open-password-creation"; nonce: string }
   // content script → background (the only requests content scripts may send)
   | { type: "autofill-status"; kind: FieldKind }
   /** The username next to a password we generated (as it's typed). */
@@ -90,7 +92,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  lockOnScreenLock: false,
+  lockOnScreenLock: true,
   inlineMenu: true,
   touchId: true,
   generatePasswords: true,
@@ -135,7 +137,7 @@ export interface AutofillStatus {
 
 export interface GeneratedPasswords {
   strong: string;
-  alphanumeric: string;
+  alphanumeric?: string;
   /**
    * The account they'd be saved for when the form has no username (a password reset): the login
    * just chosen on this site, or its only one. macOS's save prompt has the final say.
@@ -202,6 +204,7 @@ interface Responses {
   "menu-close": null;
   "menu-focus-field": null;
   "open-passwords-app": null;
+  "open-password-creation": null;
   "generated-username": null;
   "generated-form-gone": null;
 }

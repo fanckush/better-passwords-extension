@@ -30,6 +30,15 @@ const CLASSES: Record<string, string> = {
 
 const DEFAULT_LENGTH = 20;
 const MAX_LENGTH = 64;
+// Leave one bit of margin for mixing the Apple-shaped and rule-based distributions.
+const MIN_RULE_SPACE = 1n << 81n;
+
+export class PasswordRulesError extends Error {
+  constructor() {
+    super("This site's rules cannot produce a strong password suggestion. Choose a password in Apple Passwords.");
+    this.name = "PasswordRulesError";
+  }
+}
 
 interface ParsedRules {
   minLength: number;
@@ -128,8 +137,13 @@ function appleShaped(style: PasswordStyle, random: RandomIndex): string {
   return [letters.slice(0, 6), letters.slice(6, 12), letters.slice(12)].map((group) => group.join("")).join("-");
 }
 
-/** A password built straight from the site's rules. */
-function fromRules(style: PasswordStyle, rules: ParsedRules, random: RandomIndex): string {
+interface Recipe {
+  pool: string;
+  checks: ParsedRules;
+  length: number;
+}
+
+function recipe(style: PasswordStyle, rules: ParsedRules): Recipe {
   const defaults = style === "strong" ? `${LOWER}${UPPER}${DIGIT}-` : LOWER + UPPER + DIGIT;
   let pool = rules.allowed || unique(defaults + rules.required.join(""));
   if (style === "alphanumeric" && !rules.required.some((set) => set === CLASSES.special)) {
@@ -141,21 +155,42 @@ function fromRules(style: PasswordStyle, rules: ParsedRules, random: RandomIndex
   if (!rules.allowed) for (const set of [LOWER, UPPER, DIGIT]) if (!required.includes(set)) required.push(set);
   const checks: ParsedRules = { ...rules, required };
   const length = Math.min(Math.max(DEFAULT_LENGTH, rules.minLength, checks.required.length), rules.maxLength);
+  if (
+    !Number.isInteger(length) ||
+    length < 1 ||
+    length > MAX_LENGTH ||
+    length < rules.minLength ||
+    required.length > 16
+  ) {
+    throw new PasswordRulesError();
+  }
+  const size = BigInt(pool.length);
+  const total = size ** BigInt(length);
+  // Subtract an upper bound for each way a string can break a rule. Overlaps only
+  // lower this bound, so uncertain or excessively restrictive rules fail closed.
+  let valid = total;
+  for (const set of new Set(required)) {
+    const matches = [...pool].filter((character) => set.includes(character)).length;
+    valid -= BigInt(pool.length - matches) ** BigInt(length);
+  }
+  if (rules.maxConsecutive && rules.maxConsecutive < length) {
+    valid -= BigInt(length - rules.maxConsecutive) * size ** BigInt(length - rules.maxConsecutive);
+  }
+  if (valid < MIN_RULE_SPACE) throw new PasswordRulesError();
+  return { pool, checks, length };
+}
+
+/** A password built straight from a validated set of site rules. */
+function fromRules({ pool, checks, length }: Recipe, random: RandomIndex): string {
   let password = "";
-  for (let attempt = 0; attempt < 500; attempt++) {
+  for (let attempt = 0; attempt < 128; attempt++) {
     password = "";
     for (let i = 0; i < length; i++) {
-      let choices = pool;
-      const limit = rules.maxConsecutive;
-      if (limit && i >= limit && password.slice(-limit) === (password.at(-1) ?? "").repeat(limit)) {
-        choices = pool.replaceAll(password.at(-1) ?? "", "") || pool;
-      }
-      password += pick(choices, random);
+      password += pick(pool, random);
     }
     if (satisfies(password, checks)) return password;
   }
-  // rules that contradict each other: the last try still respects the length and characters
-  return password;
+  throw new PasswordRulesError();
 }
 
 export function generatePassword(
@@ -163,8 +198,10 @@ export function generatePassword(
   fieldRules: FieldRules = {},
   random: RandomIndex = cryptoRandomIndex,
 ): string {
+  if ((fieldRules.passwordRules?.length ?? 0) > 4096) throw new PasswordRulesError();
   const rules = parseRules(fieldRules);
+  const plan = recipe(style, rules);
   const apple = appleShaped(style, random);
   if (satisfies(apple, rules)) return apple;
-  return fromRules(style, rules, random);
+  return fromRules(plan, random);
 }

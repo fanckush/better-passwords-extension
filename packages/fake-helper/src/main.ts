@@ -31,7 +31,7 @@ for (;;) {
     if (logPath && (message as HelperMessage).cmd === Command.LaunchPasswordsApp) {
       appendFileSync(
         logPath,
-        `${JSON.stringify({ type: "launch", url: (message as HelperMessage).searchQueryURL ?? "" })}\n`,
+        `${JSON.stringify({ type: "launch", url: (message as HelperMessage).newPasswordWithSuggestedURL ?? (message as HelperMessage).searchQueryURL ?? "" })}\n`,
       );
     }
     const msg = (message as HelperMessage).msg as { QID?: string } | undefined;

@@ -26,6 +26,8 @@ export class Session {
   #connecting: Promise<ApplePasswordsClient> | undefined;
   #status: SessionStatus = { state: "disconnected" };
   #listeners = new Set<(status: SessionStatus) => void>();
+  #openingTransport: Transport | undefined;
+  #generation = 0;
 
   constructor(private readonly deps: SessionDeps) {}
 
@@ -45,9 +47,12 @@ export class Session {
   /** Connects if needed. Never re-pairs a live session. */
   async connect(): Promise<ApplePasswordsClient> {
     if (this.#client && this.#client.state !== "closed") return this.#client;
-    this.#connecting ??= this.#open().finally(() => {
-      this.#connecting = undefined;
-    });
+    if (!this.#connecting) {
+      const connecting = this.#open(this.#generation).finally(() => {
+        if (this.#connecting === connecting) this.#connecting = undefined;
+      });
+      this.#connecting = connecting;
+    }
     return this.#connecting;
   }
 
@@ -76,17 +81,27 @@ export class Session {
     return client;
   }
 
+  /** Rechecks permission immediately before delivering a secret obtained asynchronously. */
+  assertCurrent(client: ApplePasswordsClient): void {
+    if (this.#client !== client || !this.isUnlocked) throw new ProtocolError("session ended", "closed");
+  }
+
   /** Ends the session. Closing the port makes Apple's helper exit and forget the key. */
   lock(): void {
+    this.#generation++;
+    this.#connecting = undefined;
+    this.#openingTransport?.close();
+    this.#openingTransport = undefined;
     this.#client?.close();
     this.#client = undefined;
     this.#set({ state: "disconnected" });
   }
 
-  async #open(): Promise<ApplePasswordsClient> {
+  async #open(generation: number): Promise<ApplePasswordsClient> {
     let transport: Transport;
     try {
       transport = this.deps.openTransport();
+      this.#openingTransport = transport;
     } catch (error) {
       this.#set({ state: "no-helper", error: message(error) });
       throw error;
@@ -101,7 +116,12 @@ export class Session {
         transport,
         this.deps.browserName ? { browserName: this.deps.browserName } : {},
       );
+      if (generation !== this.#generation) {
+        client.close();
+        throw new ProtocolError("session ended", "closed");
+      }
       client.onStateChange((state) => {
+        if (this.#client !== client || generation !== this.#generation) return;
         if (state === "closed") {
           if (this.#client === client) this.#client = undefined;
           this.#set(
@@ -115,20 +135,26 @@ export class Session {
       this.#set({ state: client.state });
       return client;
     } catch (error) {
+      transport.close();
       const reason = closeError ?? message(error);
-      this.#set(
-        MISSING_HOST.test(reason) ? { state: "no-helper", error: reason } : { state: "disconnected", error: reason },
-      );
+      if (generation === this.#generation)
+        this.#set(
+          MISSING_HOST.test(reason) ? { state: "no-helper", error: reason } : { state: "disconnected", error: reason },
+        );
       throw error;
+    } finally {
+      if (this.#openingTransport === transport) this.#openingTransport = undefined;
     }
   }
 
   async #track<T>(operation: Promise<T>): Promise<T> {
+    const generation = this.#generation;
     try {
       const result = await operation;
       return result;
     } catch (error) {
-      this.#set({ state: this.#client?.state ?? "disconnected", error: message(error) });
+      if (generation === this.#generation)
+        this.#set({ state: this.#client?.state ?? "disconnected", error: message(error) });
       throw error;
     }
   }

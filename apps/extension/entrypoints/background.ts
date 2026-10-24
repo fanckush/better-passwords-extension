@@ -23,7 +23,7 @@ import {
   type Status,
 } from "@/src/messages.ts";
 import { PortTransport } from "@/src/native/port-transport.ts";
-import { generatePassword } from "@/src/passwords/generate.ts";
+import { generatePassword, PasswordRulesError } from "@/src/passwords/generate.ts";
 import { waitForLogin } from "@/src/passwords/wait-for-login.ts";
 import { Session } from "@/src/session/session.ts";
 import { PendingUpdate } from "@/src/updates.ts";
@@ -301,12 +301,15 @@ export default defineBackground(() => {
     password: string,
     account: string | undefined,
   ): Promise<NewPasswordResult> {
+    const client = await session.unlockedClient();
     const context = await newPasswordContext(tabId, nonce);
     if (!context.visible) return "menu-hidden";
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
     const fill = { type: "menu-fill-new-password", nonce, origin: url.origin, password } as const;
+    session.assertCurrent(client);
     const reply = (await relay(tabId, fill).catch(() => undefined)) as { result: NewPasswordResult } | undefined;
+    session.assertCurrent(client);
     const result = reply?.result ?? "no-fields";
     if (result !== "filled") return result;
     const previous = generatedByTab.get(tabId);
@@ -554,6 +557,7 @@ export default defineBackground(() => {
         return { result };
       }
       case "generate-passwords": {
+        const client = await session.unlockedClient();
         const tabId = tabOf(caller);
         const context = await newPasswordContext(tabId, request.nonce);
         const url = await tabUrl(tabId);
@@ -563,9 +567,14 @@ export default defineBackground(() => {
         const account = guess ? await accountFor(url.hostname).catch(() => undefined) : undefined;
         const passwords: GeneratedPasswords = {
           strong: generatePassword("strong", context.rules),
-          alphanumeric: generatePassword("alphanumeric", context.rules),
           ...(account ? { account } : {}),
         };
+        try {
+          passwords.alphanumeric = generatePassword("alphanumeric", context.rules);
+        } catch (error) {
+          if (!(error instanceof PasswordRulesError)) throw error;
+        }
+        session.assertCurrent(client);
         generatedForMenu.set(`${tabId}:${request.nonce}`, passwords);
         return passwords;
       }
@@ -573,7 +582,9 @@ export default defineBackground(() => {
         const tabId = tabOf(caller);
         const passwords = generatedForMenu.get(`${tabId}:${request.nonce}`);
         if (!passwords) throw new Error("That password expired. Try again.");
-        return { result: await fillGenerated(tabId, request.nonce, passwords[request.style], passwords.account) };
+        const password = passwords[request.style];
+        if (!password) throw new PasswordRulesError();
+        return { result: await fillGenerated(tabId, request.nonce, password, passwords.account) };
       }
       case "unconfirmed-passwords": {
         const url = await tabUrl(tabOf(caller, request.tabId));
@@ -603,6 +614,13 @@ export default defineBackground(() => {
         const url = tabId === undefined ? undefined : await tabUrl(tabId).catch(() => undefined);
         const client = await session.connect();
         client.openPasswordsApp(url?.origin);
+        return null;
+      }
+      case "open-password-creation": {
+        const url = await tabUrl(tabOf(caller));
+        if (!url) throw new Error("this page can't create a password");
+        const client = await session.connect();
+        client.openPasswordsApp(url.origin, { create: true });
         return null;
       }
       case "menu-resize":
@@ -691,26 +709,25 @@ export default defineBackground(() => {
     username: string,
     fill: (origin: string, password: string | null) => Promise<string>,
   ): Promise<string> {
+    const client = await session.unlockedClient();
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
+    session.assertCurrent(client);
     const result = await fill(url.origin, null);
+    session.assertCurrent(client);
     if (result === "filled") chosenLogins.set(url.hostname, { username, tabId, at: Date.now() });
     if (result !== "needs-password") return result;
-    // the tab may have moved on meanwhile: the password is for the site it's on now, and only fills there
-    const { url: now, credential } = await credentialFor(tabId, username);
-    const filled = await fill(now.origin, credential.password);
-    // signed in: no reset to save for
-    if (filled === "filled") chosenLogins.delete(now.hostname);
-    return filled;
-  }
-
-  async function credentialFor(tabId: number, username: string) {
-    const url = await tabUrl(tabId);
-    if (!url) throw new Error("this page can't be filled");
-    const client = await session.unlockedClient();
+    const now = await tabUrl(tabId);
+    session.assertCurrent(client);
+    if (now?.origin !== url.origin) return "origin-mismatch";
     const credential = await client.getPassword(url.hostname, username, { tabId });
+    session.assertCurrent(client);
     if (!credential) throw new Error("that login is no longer saved");
-    return { url, credential };
+    const filled = await fill(url.origin, credential.password);
+    session.assertCurrent(client);
+    // signed in: no reset to save for
+    if (filled === "filled") chosenLogins.delete(url.hostname);
+    return filled;
   }
 
   browser.runtime.onMessage.addListener((request: Request & { menuNonce?: unknown }, sender, sendResponse) => {

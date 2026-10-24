@@ -180,6 +180,9 @@ export const test = base.extend<Fixtures, { siteUrl: string }>({
     const dir = profileWithFakeHelper(companion, declineSaves, companionEmails, vaultEntries, setUp);
     const context = await chromium.launchPersistentContext(join(dir, "profile"), {
       channel: "chromium",
+      ...(process.env.BETTER_PASSWORDS_CHROMIUM_PATH
+        ? { executablePath: process.env.BETTER_PASSWORDS_CHROMIUM_PATH }
+        : {}),
       args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`, ...browserArgs],
     });
     profileDirs.set(context, dir);

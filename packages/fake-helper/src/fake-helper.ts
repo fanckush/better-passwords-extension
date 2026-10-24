@@ -83,6 +83,7 @@ export class FakeHelper {
     this.#capabilities = {
       shouldUseBase64: options.base64 ?? true,
       canFillOneTimeCodes: false,
+      canOpenPasswordsAppToNewPasswordSheet: true,
       ...options.capabilities,
     };
   }
@@ -100,7 +101,13 @@ export class FakeHelper {
       case Command.SetPassword:
         return this.#save(message);
       case Command.LaunchPasswordsApp:
-        this.passwordsAppLaunches.push(typeof message.searchQueryURL === "string" ? message.searchQueryURL : "");
+        this.passwordsAppLaunches.push(
+          typeof message.newPasswordWithSuggestedURL === "string"
+            ? message.newPasswordWithSuggestedURL
+            : typeof message.searchQueryURL === "string"
+              ? message.searchQueryURL
+              : "",
+        );
         return [];
       default:
         return [];

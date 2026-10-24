@@ -59,6 +59,7 @@ export interface Capabilities {
   canFillOneTimeCodes?: boolean;
   /** Whether a login can be saved before the user has typed a username. */
   canSaveAccountWithEmptyUserName?: boolean;
+  canOpenPasswordsAppToNewPasswordSheet?: boolean;
   operatingSystem?: { name: string; majorVersion: number; minorVersion: number };
   [key: string]: unknown;
 }

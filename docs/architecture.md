@@ -71,7 +71,7 @@ The content script runs in the top frame only. Logins inside cross-origin iframe
 1. The popup asks the background for the active tab's logins.
 2. The background reads the tab URL itself (granted by `activeTab` when the user opens the popup) and refuses anything that is not `https:` (or `http://localhost`).
 3. On click, the background first injects `fillCredentials` without the password. On a username-only step of a multi-step sign-in, that fills the username and nothing else: no password is read, so no Touch ID. The background remembers the choice for that site (only the username, for 10 minutes, until it's used, or until locking): the sign-in's next step in that tab lists that login alone, the others a click away, and a password reset on that site saves for it (see below).
-4. On a form with a password field, the background fetches the password from the helper (macOS may ask for Touch ID here) and injects `fillCredentials` again with it, with the expected origin. If the page navigated elsewhere in the meantime, nothing is filled.
+4. On a form with a password field, the background fetches the password from the helper (macOS may ask for Touch ID here) and injects `fillCredentials` again with the original expected origin. Changing origin cancels the choice. The background rechecks the active session before delivering the secret. Lock invalidates operations already processing a reply.
 5. The fill function skips hidden and zero-size fields, and fills the username field from the password field's own form.
 
 The inline menu fills the same way, through the content script.
@@ -79,6 +79,10 @@ The inline menu fills the same way, through the content script.
 ## New passwords (sign-up and change-password forms)
 
 Password fields on sign-up and change-password forms get a menu with two generated passwords: Apple's style (`xxxxxx-xxxxxx-xxxxxx`) and one without special characters. Both follow the field's `minlength`, `maxlength` and `passwordrules`. They are generated in the background worker, and shown masked until the user hovers the eye.
+
+The first option is **Create in Apple Passwords**, available even before pairing. It uses Apple's helper to open the native creation sheet when supported, or opens the app at the site on older helpers. Creation, generation and saving then happen in Apple's app; this action reads no password and fills nothing into the page. Return to the browser and choose the saved login to fill it.
+
+Inline suggestions require a conservative rule-space bound with a margin above 80 bits. Predictable, short, contradictory or excessively complex rules are refused before randomness is used. Bounded generation must satisfy every parsed rule; exhaustion returns an error. The menu keeps native creation available when inline generation is refused. A restrictive website may still require a weak password; opening Apple's app does not remove the site's restriction.
 
 Like Safari, the chosen password is filled right away, and Apple Passwords is asked to save it once the page moves on with it. Apple's helper shows macOS's "Save password?" prompt but never reports the outcome, so the background then looks the login up until it appears.
 

@@ -32,8 +32,8 @@ describe("generatePassword", () => {
 
   it("fits a field's maxlength", () => {
     repeat(100, () => {
-      const password = generatePassword("strong", { maxLength: 12 });
-      expect(password).toHaveLength(12);
+      const password = generatePassword("strong", { maxLength: 16 });
+      expect(password).toHaveLength(16);
       expect(password).toMatch(/[a-z]/);
       expect(password).toMatch(/[A-Z]/);
       expect(password).toMatch(/[0-9]/);
@@ -52,16 +52,16 @@ describe("generatePassword", () => {
 
   it("respects allowed-only character sets", () => {
     repeat(50, () => {
-      expect(generatePassword("strong", { passwordRules: "allowed: digit; minlength: 8; maxlength: 8" })).toMatch(
-        /^[2-9]{8}$/,
+      expect(generatePassword("strong", { passwordRules: "allowed: digit; minlength: 28; maxlength: 28" })).toMatch(
+        /^[2-9]{28}$/,
       );
     });
   });
 
   it("respects max-consecutive", () => {
     repeat(50, () => {
-      const password = generatePassword("strong", { passwordRules: "allowed: [ab]; max-consecutive: 1" });
-      expect(password).not.toMatch(/aa|bb/);
+      const password = generatePassword("strong", { passwordRules: "max-consecutive: 1" });
+      expect(password).not.toMatch(/(.)\1/);
     });
   });
 
@@ -69,6 +69,23 @@ describe("generatePassword", () => {
     expect(generatePassword("strong", { passwordRules: "nonsense; required: ; maxlength: -3" })).toMatch(
       /^[a-zA-Z0-9]{6}-[a-zA-Z0-9]{6}-[a-zA-Z0-9]{6}$/,
     );
+  });
+
+  it.each([
+    { passwordRules: "allowed: [a]; minlength: 20; maxlength: 20" },
+    { maxLength: 6, passwordRules: "allowed: digit" },
+    { maxLength: 1 },
+    { passwordRules: "allowed: [ab]; max-consecutive: 1" },
+    { minLength: 30, maxLength: 10 },
+  ])("refuses unsafe or contradictory rules before using randomness: %j", (rules) => {
+    let draws = 0;
+    expect(() =>
+      generatePassword("strong", rules, () => {
+        draws++;
+        return 0;
+      }),
+    ).toThrow(/strong password/i);
+    expect(draws).toBe(0);
   });
 });
 
