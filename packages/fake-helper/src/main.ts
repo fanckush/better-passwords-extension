@@ -28,12 +28,7 @@ for (;;) {
   for (const message of decoder.push(value)) {
     const logPath = process.env.FAKE_HELPER_LOG;
     const savedBefore = helper.saved.length;
-    if (logPath && (message as HelperMessage).cmd === Command.LaunchPasswordsApp) {
-      appendFileSync(
-        logPath,
-        `${JSON.stringify({ type: "launch", url: (message as HelperMessage).newPasswordWithSuggestedURL ?? (message as HelperMessage).searchQueryURL ?? "" })}\n`,
-      );
-    }
+    const launchesBefore = helper.passwordsAppLaunches.length;
     const msg = (message as HelperMessage).msg as { QID?: string } | undefined;
     if (logPath && (message as HelperMessage).cmd === Command.Handshake && msg?.QID === "m0") {
       appendFileSync(logPath, `${JSON.stringify({ type: "code" })}\n`);
@@ -45,6 +40,9 @@ for (;;) {
       await Bun.write(Bun.stdout, encodeFrame(reply));
     }
     if (logPath) {
+      for (const url of helper.passwordsAppLaunches.slice(launchesBefore)) {
+        appendFileSync(logPath, `${JSON.stringify({ type: "launch", url })}\n`);
+      }
       for (const save of helper.saved.slice(savedBefore)) {
         appendFileSync(logPath, `${JSON.stringify({ type: "save", ...save })}\n`);
       }

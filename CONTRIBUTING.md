@@ -14,8 +14,6 @@ bun run build        # Chromium + Firefox packages into apps/extension/.output
 bun run test:e2e     # Playwright: real Chromium + the fake helper (run `bunx playwright install chromium` once)
 ```
 
-To use an existing Chromium test binary, set `BETTER_PASSWORDS_CHROMIUM_PATH` to its absolute executable path. Tests still create fresh profiles and use only the fake native helper. Leave it unset to use Playwright's pinned browser.
-
 ## Repository layout
 
 | Path | Contents |

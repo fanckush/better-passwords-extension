@@ -71,6 +71,10 @@ describe("generatePassword", () => {
     );
   });
 
+  it("throws when its bounded sampler cannot satisfy otherwise safe rules", () => {
+    expect(() => generatePassword("strong", { maxLength: 16 }, () => 0)).toThrow(/strong password/i);
+  });
+
   it.each([
     { passwordRules: "allowed: [a]; minlength: 20; maxlength: 20" },
     { maxLength: 6, passwordRules: "allowed: digit" },

@@ -101,7 +101,14 @@ test("refuses a weak inline suggestion and keeps native creation available", asy
 test("keeps a valid strong suggestion when the site requires a special character", async ({ context, siteUrl }) => {
   const page = await context.newPage();
   await page.goto(`${siteUrl}/signup.html`);
-  await page.locator("#new").evaluate((field) => field.setAttribute("passwordrules", "required: [!#]; minlength: 24"));
+  await page
+    .locator("#new")
+    .evaluate((field) =>
+      field.setAttribute(
+        "passwordrules",
+        "required: lower; required: upper; required: digit; required: [!#]; minlength: 24",
+      ),
+    );
   const menu = await unlockedMenu(page);
   await expect(menu.getByText("Strong Password", { exact: true })).toBeVisible();
   await expect(menu.getByText("Without Special Characters", { exact: true })).not.toBeVisible();
