@@ -59,9 +59,9 @@ export interface Capabilities {
   canFillOneTimeCodes?: boolean;
   /** Whether a login can be saved before the user has typed a username. */
   canSaveAccountWithEmptyUserName?: boolean;
-  canOpenPasswordsAppToNewPasswordSheet?: boolean;
   operatingSystem?: { name: string; majorVersion: number; minorVersion: number };
   [key: string]: unknown;
+  canOpenPasswordsAppToNewPasswordSheet?: boolean;
 }
 
 /** Any message from the helper. Replies echo the request's `cmd`; there is no correlation id. */

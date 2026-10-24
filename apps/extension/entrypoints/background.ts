@@ -308,15 +308,15 @@ export default defineBackground(() => {
     password: string,
     account: string | undefined,
   ): Promise<NewPasswordResult> {
-    const client = await session.unlockedClient();
+    const { assertCurrent } = await beginFill(tabId);
     const context = await newPasswordContext(tabId, nonce);
     if (!context.visible) return "menu-hidden";
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
     const fill = { type: "menu-fill-new-password", nonce, origin: url.origin, password } as const;
-    session.assertCurrent(client);
+    assertCurrent();
     const reply = (await relay(tabId, fill).catch(() => undefined)) as { result: NewPasswordResult } | undefined;
-    session.assertCurrent(client);
+    assertCurrent();
     const result = reply?.result ?? "no-fields";
     if (result !== "filled") return result;
     const previous = generatedByTab.get(tabId);
@@ -739,13 +739,7 @@ export default defineBackground(() => {
     username: string,
     fill: (origin: string, password: string | null) => Promise<string>,
   ): Promise<string> {
-    const choice = {};
-    fillChoices.set(tabId, choice);
-    const client = await session.unlockedClient();
-    const assertCurrent = () => {
-      session.assertCurrent(client);
-      if (fillChoices.get(tabId) !== choice) throw new ProtocolError("replaced by a newer choice", "superseded");
-    };
+    const { client, assertCurrent } = await beginFill(tabId);
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
     assertCurrent();
@@ -764,6 +758,19 @@ export default defineBackground(() => {
     // signed in: no reset to save for
     if (filled === "filled") chosenLogins.delete(url.hostname);
     return filled;
+  }
+
+  /** Both saved and generated fills replace the tab's previous choice before any asynchronous work. */
+  async function beginFill(tabId: number) {
+    const choice = {};
+    fillChoices.set(tabId, choice);
+    const client = await session.unlockedClient();
+    const assertCurrent = () => {
+      session.assertCurrent(client);
+      if (fillChoices.get(tabId) !== choice) throw new ProtocolError("replaced by a newer choice", "superseded");
+    };
+    assertCurrent();
+    return { client, assertCurrent };
   }
 
   browser.runtime.onMessage.addListener((request: Request & { menuNonce?: unknown }, sender, sendResponse) => {

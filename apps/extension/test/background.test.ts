@@ -133,3 +133,44 @@ it("cancels save polling across Lock and a new pairing without delivering the ol
   await new Promise((resolve) => setTimeout(resolve, 1_200));
   expect(relay.mock.calls.filter(([, message]) => message.type === "generated-password-saved")).toEqual([]);
 });
+
+it.each(["saved", "generated"] as const)(
+  "a newer choice cancels a pending %s fill across both fill paths",
+  async (olderKind) => {
+    const { nonce } = await request<{ nonce: string }>({ type: "autofill-status", kind: "new-password" }, content);
+    const menu = { ...page, tab: { id: 1 } };
+    await request({ type: "generate-passwords", nonce }, menu);
+    const paused = Promise.withResolvers<unknown>();
+    const started = Promise.withResolvers<void>();
+    const delivered: string[] = [];
+    execute.mockImplementation(async ({ args }: { args: [string, string, string | null] }) => {
+      if (olderKind === "saved" && args[2] === null) {
+        started.resolve();
+        return paused.promise;
+      }
+      if (args[2] !== null) delivered.push("saved");
+      return [{ result: args[2] === null ? "needs-password" : "filled" }];
+    });
+    relay.mockImplementation(async (_tab, message) => {
+      if (message.type === "menu-new-password-context") {
+        if (olderKind === "generated") {
+          started.resolve();
+          return paused.promise;
+        }
+        return { visible: true, rules: {}, username: "new-account" };
+      }
+      if (message.type === "menu-fill-new-password") delivered.push("generated");
+      return { result: "filled" };
+    });
+    const savedRequest = () => request({ type: "fill", tabId: 1, username: "newer" });
+    const generatedRequest = () => request({ type: "use-generated-password", nonce, style: "strong" }, menu);
+    const older = (olderKind === "saved" ? savedRequest() : generatedRequest()).catch((error: unknown) => error);
+    await started.promise;
+    await (olderKind === "saved" ? generatedRequest() : savedRequest());
+    paused.resolve(
+      olderKind === "saved" ? [{ result: "needs-password" }] : { visible: true, rules: {}, username: "new-account" },
+    );
+    expect(await older).toBeInstanceOf(Error);
+    expect(delivered).toEqual([olderKind === "saved" ? "generated" : "saved"]);
+  },
+);
