@@ -195,7 +195,9 @@ async function showGenerate(error?: string) {
     // a form that doesn't say whose password this is (a reset): say who we'll save it for
     passwords.account ? message(`For ${passwords.account}`) : null,
     passwordRow("Strong Password", passwords.strong, () => void useGenerated("strong")),
-    passwordRow("Without Special Characters", passwords.alphanumeric, () => void useGenerated("alphanumeric")),
+    passwords.alphanumeric
+      ? passwordRow("Without Special Characters", passwords.alphanumeric, () => void useGenerated("alphanumeric"))
+      : null,
     error ? message(error, true) : null,
     h("hr", { class: "separator" }),
     openPasswordsRow(false),

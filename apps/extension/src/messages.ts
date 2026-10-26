@@ -25,7 +25,7 @@ export type Request =
   | { type: "menu-resize"; nonce: string; height: number }
   | { type: "menu-close"; nonce: string }
   | { type: "menu-focus-field"; nonce: string }
-  /** Two fresh strong passwords for the new-password field the menu was opened on. */
+  /** A strong password and, when allowed, an alphanumeric alternative for the new-password field. */
   | { type: "generate-passwords"; nonce: string }
   /** Fills the chosen password; Apple Passwords is asked to save it when the form is submitted. */
   | { type: "use-generated-password"; nonce: string; style: PasswordStyle }
@@ -144,7 +144,7 @@ export interface AutofillStatus {
 
 export interface GeneratedPasswords {
   strong: string;
-  alphanumeric: string;
+  alphanumeric?: string;
   /**
    * The account they'd be saved for when the form has no username (a password reset): the login
    * just chosen on this site, or its only one. macOS's save prompt has the final say.
