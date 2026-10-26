@@ -99,7 +99,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  lockOnScreenLock: false,
+  lockOnScreenLock: true,
   inlineMenu: true,
   touchId: true,
   generatePasswords: true,
