@@ -189,11 +189,12 @@ async function showGenerate(error?: string) {
   try {
     passwords = await send({ type: "generate-passwords", nonce });
   } catch (e) {
-    return render(message(messageOf(e), true));
+    return render(message(messageOf(e), true), createPasswordRow());
   }
   render(
     // a form that doesn't say whose password this is (a reset): say who we'll save it for
     passwords.account ? message(`For ${passwords.account}`) : null,
+    createPasswordRow(),
     passwordRow("Strong Password", passwords.strong, () => void useGenerated("strong")),
     passwordRow("Without Special Characters", passwords.alphanumeric, () => void useGenerated("alphanumeric")),
     error ? message(error, true) : null,
@@ -454,6 +455,17 @@ function openPasswordsRow(withDetail: boolean) {
   });
 }
 
+function createPasswordRow() {
+  return row(OPEN, "Create in Apple Passwords", "Choose and save in Apple's app", async () => {
+    try {
+      await send({ type: "open-password-creation", nonce });
+      close();
+    } catch (error) {
+      render(message(messageOf(error), true), createPasswordRow());
+    }
+  });
+}
+
 async function fill(username: string) {
   try {
     const { result } = await send({ type: "fill-from-menu", nonce, username });
@@ -476,6 +488,7 @@ async function showLocked(error?: string) {
   const status = await send({ type: "get-status" }).catch(() => undefined);
   const touchId = status?.touchId === true;
   render(
+    kind === "new-password" ? createPasswordRow() : null,
     // with the companion app, Touch ID replaces typing the code; the row says so underneath
     row(LOCK, unlockTitle(), touchId ? "Touch ID enters the code for you" : DISPLAY_NAME, () =>
       touchId ? void unlockWithTouchId() : void startPairing(),

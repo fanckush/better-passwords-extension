@@ -61,6 +61,7 @@ export interface Capabilities {
   canSaveAccountWithEmptyUserName?: boolean;
   operatingSystem?: { name: string; majorVersion: number; minorVersion: number };
   [key: string]: unknown;
+  canOpenPasswordsAppToNewPasswordSheet?: boolean;
 }
 
 /** Any message from the helper. Replies echo the request's `cmd`; there is no correlation id. */

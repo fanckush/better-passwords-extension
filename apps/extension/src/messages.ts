@@ -65,7 +65,9 @@ export type Request =
   /** The user changed the password after sending it (the site said it was wrong): forget it. */
   | { type: "login-edited" }
   /** The field of the sent login went away (a dialog closed, a step moved on). */
-  | { type: "login-form-gone" };
+  | { type: "login-form-gone" }
+  /** Opens Apple's own password creation UI, with this tab's site prefilled when supported. */
+  | { type: "open-password-creation"; nonce: string };
 
 /** Requests content scripts are allowed to send. */
 export const CONTENT_SCRIPT_REQUESTS: ReadonlySet<Request["type"]> = new Set([
@@ -216,6 +218,7 @@ interface Responses {
   "login-sent": null;
   "login-edited": null;
   "login-form-gone": null;
+  "open-password-creation": null;
 }
 
 export type Response<R extends Request> = R["type"] extends keyof Responses ? Responses[R["type"]] : Status;

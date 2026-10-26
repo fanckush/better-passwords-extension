@@ -115,6 +115,21 @@ describe("ApplePasswordsClient", () => {
     await vi.waitFor(() => expect(helper.passwordsAppLaunches).toEqual(["https://example.com/login", "", ""]));
   });
 
+  it("opens Apple's native creation sheet only when the helper supports it", async () => {
+    for (const supported of [true, false]) {
+      const helper = new FakeHelper({ capabilities: { canOpenPasswordsAppToNewPasswordSheet: supported } });
+      const transport = new MemoryTransport(helper);
+      const client = await ApplePasswordsClient.connect(transport);
+      client.openPasswordsApp("https://example.com", { create: true });
+      expect(transport.sent.at(-1)).toEqual({
+        cmd: 13,
+        ...(supported
+          ? { newPasswordWithSuggestedURL: "https://example.com" }
+          : { searchQueryURL: "https://example.com" }),
+      });
+      client.close();
+    }
+  });
   it("saves a login, which a lookup then finds", async () => {
     const { helper, client } = await setup();
     await pair(helper, client);
@@ -264,9 +279,11 @@ describe("ApplePasswordsClient", () => {
 
     it("lets a new read replace it, keeping the session", async () => {
       const helper = silentOnce();
-      const client = await ApplePasswordsClient.connect(new MemoryTransport(helper));
+      const transport = new MemoryTransport(helper);
+      const client = await ApplePasswordsClient.connect(transport);
       await pair(helper, client);
       const first = client.getPassword("example.com", "bob", tab).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(transport.sent.some((message) => (message as HelperMessage).cmd === 5)).toBe(true));
       expect(await client.getPassword("example.com", "bob", tab)).toEqual({
         username: "bob",
         password: "battery staple",
@@ -289,6 +306,7 @@ describe("ApplePasswordsClient", () => {
       const client = await ApplePasswordsClient.connect(new MemoryTransport(helper));
       await pair(helper, client);
       const first = client.getPassword("example.com", "bob", tab).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(late).toBeDefined());
       await expect(client.getPassword("example.com", "alice@example.com", tab)).rejects.toMatchObject({
         code: "invalid-reply",
       });
