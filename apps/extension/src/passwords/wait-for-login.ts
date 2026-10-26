@@ -22,11 +22,12 @@ export async function waitForLogin(
   const deadline = Date.now() + timeoutMs;
   while (!signal?.aborted && Date.now() < deadline) {
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, intervalMs);
       const stop = () => {
         clearTimeout(timer);
+        signal?.removeEventListener("abort", stop);
         resolve();
       };
+      const timer = setTimeout(stop, intervalMs);
       signal?.addEventListener("abort", stop, { once: true });
     });
     if (signal?.aborted) return undefined;

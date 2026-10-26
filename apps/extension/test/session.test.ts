@@ -1,5 +1,5 @@
 import { FakeHelper, MemoryTransport } from "@app/fake-helper";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Session } from "../src/session/session.ts";
 
 const vault = [{ hostname: "example.com", username: "alice", password: "pw" }];
@@ -75,6 +75,29 @@ describe("Session", () => {
     session.lock();
     expect(session.status.state).toBe("disconnected");
     await expect(session.unlockedClient()).rejects.toThrow();
+  });
+
+  it("lock cancels a connection that has not received capabilities yet", async () => {
+    const transport = new MemoryTransport(new FakeHelper());
+    transport.send = () => {};
+    const close = vi.spyOn(transport, "close");
+    const session = new Session({ openTransport: () => transport });
+    const opening = session.connect().catch((error: unknown) => error);
+    session.lock();
+    transport.push({ cmd: 14, capabilities: { shouldUseBase64: true } });
+    expect(await opening).toMatchObject({ code: "closed" });
+    expect(close).toHaveBeenCalled();
+    expect(session.status.state).toBe("disconnected");
+  });
+
+  it("refuses delivery from a client obtained before Lock", async () => {
+    const { helper, session } = setup();
+    await session.requestCode();
+    await session.verifyCode(helper.currentCode ?? "");
+    const client = await session.unlockedClient();
+    expect(await client.getPassword("example.com", "alice", { tabId: 1 })).toBeDefined();
+    session.lock();
+    expect(() => session.assertCurrent(client)).toThrow("session ended");
   });
 
   it("tells a missing host apart from one that failed during the handshake", async () => {
