@@ -245,7 +245,9 @@ export class ApplePasswordsClient {
         URL: hostname,
       });
       // a login saved without a username may come back without the field at all
-      return (reply.Entries ?? []).map((e) => ({ username: e.USR ?? "", sites: e.sites ?? [] }));
+      return (reply.Entries ?? [])
+        .filter((entry) => entry.sites?.includes(hostname))
+        .map((entry) => ({ username: entry.USR ?? "", sites: entry.sites ?? [] }));
     });
   }
 
@@ -268,11 +270,9 @@ export class ApplePasswordsClient {
         { ACT: Action.Search, URL: hostname, USR: username },
         null,
       );
-      const entry = reply.Entries?.[0];
+      const entry = reply.Entries?.find((entry) => (entry.USR ?? "") === username && entry.sites?.includes(hostname));
+      if (!entry && reply.Entries?.length) throw invalid("reply for another site or login");
       if (!entry || typeof entry.PWD !== "string") return undefined;
-      // Replies carry no id: a late answer to a replaced read could arrive now. Use only the
-      // password of the login asked for.
-      if ((entry.USR ?? "") !== username) throw new ProtocolError("reply for another login", "invalid-reply");
       return { username, password: entry.PWD };
     })();
   }
