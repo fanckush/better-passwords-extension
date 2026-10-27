@@ -715,6 +715,13 @@ export default defineBackground(() => {
         client.openPasswordsApp(url?.origin);
         return null;
       }
+      case "open-password-creation": {
+        const url = await tabUrl(tabOf(caller));
+        if (!url) throw new Error("this page can't create a password");
+        const client = await session.connect();
+        client.openPasswordsApp(url.origin, { create: true });
+        return null;
+      }
       case "menu-resize":
       case "menu-close":
       case "menu-focus-field":

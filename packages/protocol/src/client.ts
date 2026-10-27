@@ -281,10 +281,16 @@ export class ApplePasswordsClient {
    * Opens Apple's Passwords app, searching for `url` when it is a web address. Works without
    * pairing, and the helper sends no reply.
    */
-  openPasswordsApp(url?: string): void {
+  openPasswordsApp(url?: string, options: { create?: boolean } = {}): void {
     this.#assertOpen();
-    const message: { cmd: number; searchQueryURL?: string } = { cmd: Command.LaunchPasswordsApp };
-    if (url && /^https?:\/\//.test(url)) message.searchQueryURL = url;
+    const message: { cmd: number; searchQueryURL?: string; newPasswordWithSuggestedURL?: string } = {
+      cmd: Command.LaunchPasswordsApp,
+    };
+    if (url && /^https?:\/\//.test(url)) {
+      if (options.create && this.#capabilities.canOpenPasswordsAppToNewPasswordSheet === true) {
+        message.newPasswordWithSuggestedURL = url;
+      } else message.searchQueryURL = url;
+    }
     this.transport.send(message);
   }
 

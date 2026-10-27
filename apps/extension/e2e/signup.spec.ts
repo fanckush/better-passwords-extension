@@ -57,6 +57,27 @@ async function expectNoSave(page: Page, helperSaves: () => unknown[]) {
 
 const create = (page: Page) => page.getByRole("button", { name: "Create account" }).click();
 
+test("opens native password creation without pairing or exposing a password to the page", async ({
+  context,
+  siteUrl,
+  passwordsAppLaunches,
+  codesShown,
+  passwordReads,
+  helperSaves,
+}) => {
+  const page = await context.newPage();
+  await page.goto(`${siteUrl}/signup.html`);
+  const codesBefore = codesShown();
+  await page.locator("#new").click();
+  const menu = await menuFrame(page);
+  await page.screenshot({ path: test.info().outputPath("native-creation.png") });
+  await choose(menu, "Create in Apple Passwords");
+  await expect.poll(passwordsAppLaunches).toEqual([siteUrl]);
+  expect(codesShown()).toBe(codesBefore);
+  expect(passwordReads()).toBe(0);
+  expect(helperSaves()).toEqual([]);
+  await expect(page.locator("#new")).toHaveValue("");
+});
 test("fills a strong password at once and saves it once the sign-up goes through", async ({
   context,
   siteUrl,
