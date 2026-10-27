@@ -241,6 +241,100 @@ describe("ApplePasswordsClient", () => {
     await expect(client.getLogins("example.com", tab)).rejects.toMatchObject({ code: "invalid-reply" });
   });
 
+  it("does not return a password when closed during reply decryption", async () => {
+    let reply: HelperMessage | undefined;
+    const helper = new TamperingHelper((request, response) => {
+      if (request.cmd !== Command.GetPasswordForLoginName) return response;
+      reply = response;
+      return undefined;
+    });
+    const transport = new MemoryTransport(helper);
+    const client = await ApplePasswordsClient.connect(transport);
+    await pair(helper, client);
+    const read = client.getPassword("example.com", "bob", tab).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(reply).toBeDefined());
+    const entered = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const decrypt = crypto.subtle.decrypt.bind(crypto.subtle);
+    const spy = vi.spyOn(crypto.subtle, "decrypt").mockImplementationOnce(async (...args) => {
+      const plaintext = await decrypt(...args);
+      entered.resolve();
+      await resume.promise;
+      return plaintext;
+    });
+    try {
+      transport.push(reply as HelperMessage);
+      await entered.promise;
+      client.close();
+      resume.resolve();
+      expect(await read).toMatchObject({ code: "closed" });
+    } finally {
+      resume.resolve();
+      spy.mockRestore();
+      client.close();
+    }
+  });
+
+  it("does not unlock when closed during session key import", async () => {
+    let reply: HelperMessage | undefined;
+    const helper = new TamperingHelper((request, response) => {
+      if (request.cmd !== Command.Handshake || (request.msg as { QID: string }).QID !== "m2") return response;
+      reply = response;
+      return undefined;
+    });
+    const transport = new MemoryTransport(helper);
+    const client = await ApplePasswordsClient.connect(transport);
+    await client.requestChallenge();
+    const verification = client.verifyCode(helper.currentCode ?? "").catch((error: unknown) => error);
+    await vi.waitFor(() => expect(reply).toBeDefined());
+    const entered = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const importKey = crypto.subtle.importKey.bind(crypto.subtle);
+    const spy = vi.spyOn(crypto.subtle, "importKey").mockImplementationOnce(async (...args) => {
+      const key = await importKey(...args);
+      entered.resolve();
+      await resume.promise;
+      return key;
+    });
+    try {
+      transport.push(reply as HelperMessage);
+      await entered.promise;
+      client.close();
+      resume.resolve();
+      expect(await verification).toMatchObject({ code: "closed" });
+      expect(client.state).toBe("closed");
+    } finally {
+      resume.resolve();
+      spy.mockRestore();
+      client.close();
+    }
+  });
+
+  it("keeps the latest password choice when an earlier encryption finishes later", async () => {
+    const { helper, client } = await setup();
+    await pair(helper, client);
+    const entered = Promise.withResolvers<void>();
+    const resume = Promise.withResolvers<void>();
+    const encrypt = crypto.subtle.encrypt.bind(crypto.subtle);
+    const spy = vi.spyOn(crypto.subtle, "encrypt").mockImplementationOnce(async (...args) => {
+      const ciphertext = await encrypt(...args);
+      entered.resolve();
+      await resume.promise;
+      return ciphertext;
+    });
+    try {
+      const old = client.getPassword("example.com", "bob", tab).catch((error: unknown) => error);
+      await entered.promise;
+      expect(await client.getPassword("other.test", "carol", tab)).toEqual({ username: "carol", password: "hunter2" });
+      resume.resolve();
+      expect(await old).toMatchObject({ code: "superseded" });
+    } finally {
+      resume.resolve();
+      spy.mockRestore();
+      client.close();
+    }
+  });
+
   describe("when a password never comes (Touch ID dismissed)", () => {
     /** Drops the reply to the first password read, as the helper does when its prompt is dismissed. */
     function silentOnce() {
@@ -264,9 +358,11 @@ describe("ApplePasswordsClient", () => {
 
     it("lets a new read replace it, keeping the session", async () => {
       const helper = silentOnce();
-      const client = await ApplePasswordsClient.connect(new MemoryTransport(helper));
+      const transport = new MemoryTransport(helper);
+      const client = await ApplePasswordsClient.connect(transport);
       await pair(helper, client);
       const first = client.getPassword("example.com", "bob", tab).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(transport.sent.some((message) => (message as HelperMessage).cmd === 5)).toBe(true));
       expect(await client.getPassword("example.com", "bob", tab)).toEqual({
         username: "bob",
         password: "battery staple",
@@ -289,6 +385,7 @@ describe("ApplePasswordsClient", () => {
       const client = await ApplePasswordsClient.connect(new MemoryTransport(helper));
       await pair(helper, client);
       const first = client.getPassword("example.com", "bob", tab).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(late).toBeDefined());
       await expect(client.getPassword("example.com", "alice@example.com", tab)).rejects.toMatchObject({
         code: "invalid-reply",
       });
