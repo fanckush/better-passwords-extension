@@ -57,6 +57,38 @@ async function expectNoSave(page: Page, helperSaves: () => unknown[]) {
 
 const create = (page: Page) => page.getByRole("button", { name: "Create account" }).click();
 
+test("refuses a weak inline suggestion", async ({ context, siteUrl, helperSaves }) => {
+  const page = await context.newPage();
+  await page.goto(`${siteUrl}/signup.html`);
+  await page.locator("#new").evaluate((field) => field.setAttribute("maxlength", "1"));
+  const menu = await unlockedMenu(page);
+  await expect(
+    menu.getByText("This site's rules cannot produce a strong password suggestion.", { exact: false }),
+  ).toBeVisible();
+  await expect(menu.getByText("Strong Password", { exact: true })).not.toBeVisible();
+  await expect(page.locator("#new")).toHaveValue("");
+  expect(helperSaves()).toEqual([]);
+  await page.screenshot({ path: test.info().outputPath("restricted-rules.png") });
+});
+
+test("keeps a valid strong suggestion when the site requires a special character", async ({ context, siteUrl }) => {
+  const page = await context.newPage();
+  await page.goto(`${siteUrl}/signup.html`);
+  await page
+    .locator("#new")
+    .evaluate((field) =>
+      field.setAttribute(
+        "passwordrules",
+        "required: lower; required: upper; required: digit; required: [!#]; minlength: 24",
+      ),
+    );
+  const menu = await unlockedMenu(page);
+  await expect(menu.getByText("Strong Password", { exact: true })).toBeVisible();
+  await expect(menu.getByText("Without Special Characters", { exact: true })).not.toBeVisible();
+  await choose(menu, "Strong Password");
+  await expect(page.locator("#new")).toHaveValue(/[!#]/);
+});
+
 test("fills a strong password at once and saves it once the sign-up goes through", async ({
   context,
   siteUrl,

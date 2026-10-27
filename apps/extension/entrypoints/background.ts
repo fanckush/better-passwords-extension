@@ -24,7 +24,7 @@ import {
   type Status,
 } from "@/src/messages.ts";
 import { PortTransport } from "@/src/native/port-transport.ts";
-import { generatePassword } from "@/src/passwords/generate.ts";
+import { generatePassword, PasswordRulesError } from "@/src/passwords/generate.ts";
 import { waitForLogin } from "@/src/passwords/wait-for-login.ts";
 import { Session } from "@/src/session/session.ts";
 import { PendingUpdate } from "@/src/updates.ts";
@@ -670,9 +670,13 @@ export default defineBackground(() => {
         const account = guess ? await accountFor(url.hostname).catch(() => undefined) : undefined;
         const passwords: GeneratedPasswords = {
           strong: generatePassword("strong", context.rules),
-          alphanumeric: generatePassword("alphanumeric", context.rules),
           ...(account ? { account } : {}),
         };
+        try {
+          passwords.alphanumeric = generatePassword("alphanumeric", context.rules);
+        } catch (error) {
+          if (!(error instanceof PasswordRulesError)) throw error;
+        }
         generatedForMenu.set(`${tabId}:${request.nonce}`, passwords);
         return passwords;
       }
@@ -680,7 +684,9 @@ export default defineBackground(() => {
         const tabId = tabOf(caller);
         const passwords = generatedForMenu.get(`${tabId}:${request.nonce}`);
         if (!passwords) throw new Error("That password expired. Try again.");
-        return { result: await fillGenerated(tabId, request.nonce, passwords[request.style], passwords.account) };
+        const password = passwords[request.style];
+        if (!password) throw new PasswordRulesError();
+        return { result: await fillGenerated(tabId, request.nonce, password, passwords.account) };
       }
       case "unconfirmed-passwords": {
         const url = await tabUrl(tabOf(caller, request.tabId));
