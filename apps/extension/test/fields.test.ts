@@ -124,6 +124,12 @@ describe("fieldKind", () => {
     ],
     ["search box", `<input id="f" type="search">`],
     ["search box that takes emails", `<input id="f" type="text" inputmode="email" autocomplete="search">`],
+    [
+      // Outlook's: a plain text field whose label mentions email
+      "search box that mentions email",
+      `<input id="f" type="text" role="combobox" aria-label="Search for email, meetings, files and more." placeholder="Search">`,
+    ],
+    ["field in a search landmark", `<div role="search"><input id="f" type="text" aria-label="Email"></div>`],
     ["unrelated text field", `<form><input id="f" name="city"><button>Subscribe</button></form>`],
   ])("ignores a %s", (_, html) => {
     expect(fieldKind(field(html))).toBeUndefined();

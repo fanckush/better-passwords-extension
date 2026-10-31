@@ -23,6 +23,15 @@ function asksForEmail(el: HTMLInputElement): boolean {
   return el.type === "email" || el.getAttribute("inputmode")?.toLowerCase() === "email";
 }
 
+/**
+ * A search box that isn't typed as one: Outlook's says "Search for email, meetings, files and more",
+ * which would otherwise pass for an email field.
+ */
+function isSearchBox(el: HTMLInputElement): boolean {
+  if (/search/.test(el.autocomplete.toLowerCase()) || el.getAttribute("role") === "searchbox") return true;
+  return el.closest("search, [role=search]") !== null || /search/i.test(textOf(el));
+}
+
 function isTextLike(el: HTMLInputElement): boolean {
   return ["text", "email", "tel", ""].includes(el.type);
 }
@@ -113,7 +122,7 @@ export function fieldKind(target: EventTarget | null): FieldKind | undefined {
   if (!(target instanceof HTMLInputElement) || target.disabled || target.readOnly) return undefined;
   if (target.type === "password") return isNewPasswordField(target) ? "new-password" : "login";
   if (!isTextLike(target)) return undefined;
-  if (/one-time-code|cc-|address|search/.test(target.autocomplete.toLowerCase())) return undefined;
+  if (/one-time-code|cc-|address/.test(target.autocomplete.toLowerCase()) || isSearchBox(target)) return undefined;
   // on a sign-up form, the email field gets email suggestions instead of saved logins
   if (inSignupForm(target)) return isEmailLike(target) ? "email" : undefined;
   if (isUsernameField(target)) return "login";
