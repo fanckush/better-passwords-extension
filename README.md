@@ -60,7 +60,7 @@ curl -fsSL https://github.com/fanckush/better-passwords-extension/raw/main/scrip
 
 The script lets the extension reach Apple's built-in password helper. You can find it [here](scripts/setup-mac.sh). To undo use it with `--uninstall`.
 
-The setup connects Chrome, Brave, Edge, Vivaldi, Arc, Helium, Crest, Chromium, Firefox and Zen. Using another browser? [Ask for it](https://github.com/fanckush/better-passwords-extension/issues/new?template=browser.yml).
+The setup connects Chrome, Brave, Edge, Vivaldi, Arc, Helium, Crest, Ardia, Chromium, Firefox and Zen. Using another browser? [Ask for it](https://github.com/fanckush/better-passwords-extension/issues/new?template=browser.yml).
 
 ## Contributing
 

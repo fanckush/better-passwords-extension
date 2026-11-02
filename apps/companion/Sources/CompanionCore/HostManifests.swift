@@ -51,6 +51,7 @@ public enum HostManifests {
         Browser(name: "Arc", dataDirectory: "Arc/User Data", kind: .chromium),
         Browser(name: "Helium", dataDirectory: "net.imput.helium", kind: .chromium),
         Browser(name: "Crest", dataDirectory: "Crest/Chromium", kind: .chromium),
+        Browser(name: "Ardia", dataDirectory: "com.ardia.browser/Chromium", kind: .chromium),
         Browser(name: "Firefox", dataDirectory: "Firefox", kind: .firefox),
         Browser(name: "Zen", dataDirectory: "zen", kind: .firefox),
     ]

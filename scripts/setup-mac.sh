@@ -31,7 +31,8 @@ Microsoft Edge|Microsoft Edge
 Vivaldi|Vivaldi
 Arc/User Data|Arc
 net.imput.helium|Helium
-Crest/Chromium|Crest"
+Crest/Chromium|Crest
+com.ardia.browser/Chromium|Ardia"
 REQUEST_URL="https://github.com/fanckush/better-passwords-extension/issues/new?template=browser.yml"
 
 uninstall=0
