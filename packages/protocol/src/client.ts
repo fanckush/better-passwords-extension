@@ -23,6 +23,7 @@ import {
   SRP_WITH_RFC_VERIFICATION,
 } from "./messages.ts";
 import { SecureChannel } from "./secure-channel.ts";
+import { isSameSite } from "./sites.ts";
 import { SrpClient } from "./srp.ts";
 
 /** A native-messaging port. Implemented with `runtime.connectNative` in the extension. */
@@ -245,9 +246,7 @@ export class ApplePasswordsClient {
         URL: hostname,
       });
       // a login saved without a username may come back without the field at all
-      return (reply.Entries ?? [])
-        .filter((entry) => entry.sites?.includes(hostname))
-        .map((entry) => ({ username: entry.USR ?? "", sites: entry.sites ?? [] }));
+      return (reply.Entries ?? []).map((e) => ({ username: e.USR ?? "", sites: e.sites ?? [] }));
     });
   }
 
@@ -270,7 +269,11 @@ export class ApplePasswordsClient {
         { ACT: Action.Search, URL: hostname, USR: username },
         null,
       );
-      const entry = reply.Entries?.find((entry) => (entry.USR ?? "") === username && entry.sites?.includes(hostname));
+      // Replies carry no id: a late answer to a replaced read could arrive now. Use only the
+      // password of the login asked for, on the site asked for.
+      const entry = reply.Entries?.find(
+        (e) => (e.USR ?? "") === username && (e.sites ?? []).some((site) => isSameSite(site, hostname)),
+      );
       if (!entry && reply.Entries?.length) throw invalid("reply for another site or login");
       if (!entry || typeof entry.PWD !== "string") return undefined;
       return { username, password: entry.PWD };
