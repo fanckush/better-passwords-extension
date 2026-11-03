@@ -1,7 +1,7 @@
 import Foundation
 
-/// What the agent offers over XPC. Callers pass no arguments on purpose: the agent works out which
-/// browser is asking from the caller's own process, so a caller can't point it anywhere else.
+/// What the agent offers over XPC. Callers never say which browser they are: the agent works it out
+/// from the caller's own process, so a caller can't point it anywhere else.
 @objc public protocol CompanionAgentProtocol {
     /// Replies with whether the agent may read other apps' windows (Accessibility).
     func status(reply: @escaping @Sendable (_ accessibilityTrusted: Bool) -> Void)
@@ -16,6 +16,10 @@ import Foundation
 
     /// A newer version of the app, if the agent has seen one in the appcast. It looks once a day.
     func availableUpdate(reply: @escaping @Sendable (_ version: String?) -> Void)
+
+    /// Records whether macOS lets Apple's helper start in the caller's browser, as its extension
+    /// saw. Replies false when the caller isn't running under a known browser.
+    func reportHelper(blocked: Bool, reply: @escaping @Sendable (_ recorded: Bool) -> Void)
 }
 
 public enum CompanionError: String, Error, Codable, Sendable, CaseIterable {

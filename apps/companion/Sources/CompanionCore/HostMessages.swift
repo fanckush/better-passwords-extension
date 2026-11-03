@@ -11,11 +11,18 @@ public struct HostRequest: Codable, Equatable, Sendable {
         case myEmails = "my-emails"
         /// Brings the app's window up (from the extension's popup).
         case openApp = "open-app"
+        /// Whether macOS lets Apple's helper start in the caller's browser, for the app's list.
+        case helperStatus = "helper-status"
     }
 
     public var type: Kind
+    /// On helper-status: true when macOS killed the helper before it answered.
+    public var blocked: Bool?
 
-    public init(type: Kind) { self.type = type }
+    public init(type: Kind, blocked: Bool? = nil) {
+        self.type = type
+        self.blocked = blocked
+    }
 }
 
 public struct HostResponse: Codable, Equatable, Sendable {
@@ -33,7 +40,8 @@ public struct HostResponse: Codable, Equatable, Sendable {
     public var message: String?
 
     /// 1: hello, read-code. 2: adds my-emails. 3: adds open-app. 4: hello adds app and update.
-    public static let protocolVersion = 4
+    /// 5: adds helper-status.
+    public static let protocolVersion = 5
 
     public static func failure(_ error: CompanionError) -> HostResponse {
         HostResponse(ok: false, error: error, message: error.message)

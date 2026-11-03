@@ -91,3 +91,128 @@ import Testing
             ])
     }
 }
+
+@Suite struct BrowserLinksTests {
+    private func setUp(_ browsers: [String]) throws -> (URL, BrowserLinks) {
+        let support = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        for browser in browsers {
+            try FileManager.default.createDirectory(
+                at: support.appendingPathComponent(browser), withIntermediateDirectories: true)
+        }
+        let defaults = UserDefaults(suiteName: "BrowserLinksTests.\(UUID().uuidString)")!
+        return (support, BrowserLinks(defaults: defaults))
+    }
+
+    private func names(_ browsers: [Browser]) -> [String] { browsers.map(\.name) }
+
+    @Test func connectsNothingBeforeSetup() throws {
+        let (support, links) = try setUp(["Google/Chrome"])
+        defer { try? FileManager.default.removeItem(at: support) }
+        #expect(links.connectNew(hostPath: "/h", support: support).isEmpty)
+        #expect(HostManifests.connected(hostPath: "/h", support: support).isEmpty)
+    }
+
+    @Test func connectsNewBrowsersButNotDisconnectedOnes() throws {
+        let (support, links) = try setUp(["Google/Chrome", "net.imput.helium"])
+        defer { try? FileManager.default.removeItem(at: support) }
+        let helium = HostManifests.browsers.first { $0.name == "Helium" }!
+        links.autoConnect = true
+        #expect(names(links.connectNew(hostPath: "/h", support: support)) == ["Google Chrome", "Helium"])
+        #expect(links.connectNew(hostPath: "/h", support: support).isEmpty)
+
+        links.disconnect(helium, support: support)
+        #expect(names(HostManifests.connected(hostPath: "/h", support: support)) == ["Google Chrome"])
+        // a browser installed since is connected; the disconnected one stays so
+        try FileManager.default.createDirectory(
+            at: support.appendingPathComponent("com.ardia.browser/Chromium"), withIntermediateDirectories: true)
+        #expect(names(links.connectNew(hostPath: "/h", support: support)) == ["Ardia"])
+
+        try links.connect(helium, hostPath: "/h", support: support)
+        #expect(links.disconnected.isEmpty)
+        #expect(HostManifests.isConnected(helium, hostPath: "/h", support: support))
+    }
+
+    @Test func connectingOneBrowserDoesntSetUpTheRest() throws {
+        // after Remove Setup, a link from one browser (any web page can open it) connects only that one
+        let (support, links) = try setUp(["Google/Chrome", "net.imput.helium"])
+        defer { try? FileManager.default.removeItem(at: support) }
+        let helium = HostManifests.browsers.first { $0.name == "Helium" }!
+        links.reset()
+        try links.connect(helium, hostPath: "/h", support: support)
+        #expect(!links.autoConnect)
+        #expect(links.connectNew(hostPath: "/h", support: support).isEmpty)
+        #expect(names(HostManifests.connected(hostPath: "/h", support: support)) == ["Helium"])
+    }
+
+    @Test func repairsOnlyBrowsersPointingAtAMovedApp() throws {
+        let (support, links) = try setUp(["Google/Chrome", "net.imput.helium"])
+        defer { try? FileManager.default.removeItem(at: support) }
+        let helium = HostManifests.browsers.first { $0.name == "Helium" }!
+        try HostManifests.install(hostPath: "/Downloads/host", support: support)
+        links.disconnect(helium, support: support)
+        #expect(
+            names(HostManifests.pointingElsewhere(hostPath: "/Applications/host", support: support)) == [
+                "Google Chrome"
+            ])
+        #expect(HostManifests.pointingElsewhere(hostPath: "/Downloads/host", support: support).isEmpty)
+    }
+
+    @Test func takesBrowsersConnectedByAnOlderAppAsSetUp() throws {
+        let (support, links) = try setUp(["Google/Chrome"])
+        defer { try? FileManager.default.removeItem(at: support) }
+        try HostManifests.install(hostPath: "/h", support: support)
+        try FileManager.default.createDirectory(
+            at: support.appendingPathComponent("net.imput.helium"), withIntermediateDirectories: true)
+        #expect(names(links.connectNew(hostPath: "/h", support: support)) == ["Helium"])
+        #expect(links.autoConnect)
+    }
+
+    @Test func looksForAnOlderSetupOnlyOnce() throws {
+        // a fresh install: nothing connected yet, so nothing is set up, even after a link connects one
+        let (support, links) = try setUp(["Google/Chrome", "net.imput.helium"])
+        defer { try? FileManager.default.removeItem(at: support) }
+        let chrome = HostManifests.browsers.first { $0.name == "Google Chrome" }!
+        try links.connect(chrome, hostPath: "/h", support: support)
+        #expect(links.connectNew(hostPath: "/h", support: support).isEmpty)
+        #expect(!links.autoConnect)
+    }
+
+    @Test func firefoxForksConnectAndDisconnectTogether() throws {
+        let (support, links) = try setUp(["Firefox", "zen"])
+        defer { try? FileManager.default.removeItem(at: support) }
+        let zen = HostManifests.browsers.first { $0.name == "Zen" }!
+        links.autoConnect = true
+        links.connectNew(hostPath: "/h", support: support)
+        links.disconnect(zen, support: support)
+        #expect(links.disconnected == ["Firefox", "Zen"])
+        #expect(HostManifests.connected(hostPath: "/h", support: support).isEmpty)
+    }
+
+    @Test func resetStopsReconnecting() throws {
+        let (support, links) = try setUp(["Google/Chrome"])
+        defer { try? FileManager.default.removeItem(at: support) }
+        links.autoConnect = true
+        links.disconnected = ["Helium"]
+        links.setBlocked("Ardia", true)
+        links.reset()
+        #expect(!links.autoConnect)
+        #expect(links.disconnected.isEmpty)
+        #expect(links.blocked == ["Ardia"])
+    }
+
+    @Test func remembersBlockedBrowsersUntilTheyWork() throws {
+        let (_, links) = try setUp([])
+        links.setBlocked("Ardia", true)
+        #expect(links.blocked == ["Ardia"])
+        links.setBlocked("Ardia", false)
+        #expect(links.blocked.isEmpty)
+    }
+
+    @Test func recognisesBrowsersByBundleIDOrName() {
+        #expect(HostManifests.browser(bundleID: "com.ardia.browser", name: "Ardia")?.name == "Ardia")
+        #expect(HostManifests.browser(bundleID: "com.example.unknown", name: "Crest")?.name == "Crest")
+        // a name alone doesn't stand in for a browser whose identifier is known
+        #expect(HostManifests.browser(bundleID: "com.example.fake", name: "Google Chrome") == nil)
+        #expect(HostManifests.browser(bundleID: "com.apple.Terminal", name: "Terminal") == nil)
+    }
+}

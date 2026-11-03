@@ -71,6 +71,14 @@ public final class XPCAgentClient: HostRelay.Agent, @unchecked Sendable {
         return (try? result.get()) ?? nil
     }
 
+    /// An agent from before this question doesn't answer it: nothing is recorded then.
+    public func reportHelper(blocked: Bool) async -> Bool {
+        let result: Result<Bool, CompanionError> = await withAgent(timeout: Self.quick) { agent, finish in
+            agent.reportHelper(blocked: blocked) { recorded in finish(.success(recorded)) }
+        }
+        return (try? result.get()) ?? false
+    }
+
     public func readPairingCode() async -> Result<String, CompanionError> {
         await withAgent(timeout: Self.touchID) { agent, finish in
             agent.readPairingCode { code, error in

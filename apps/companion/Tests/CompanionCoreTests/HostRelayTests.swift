@@ -8,10 +8,15 @@ private struct StubAgent: HostRelay.Agent {
     var codeResult: Result<String, CompanionError> = .success("123456")
     var emailsResult: Result<[String], CompanionError> = .success(["jane@example.com"])
     var update: String?
+    var reported = Recorder()
     func status() async -> Result<Bool, CompanionError> { statusResult }
     func myEmails() async -> Result<[String], CompanionError> { emailsResult }
     func readPairingCode() async -> Result<String, CompanionError> { codeResult }
     func availableUpdate() async -> String? { update }
+    func reportHelper(blocked: Bool) async -> Bool {
+        reported.add(blocked ? "blocked" : "ok")
+        return true
+    }
 }
 
 private final class Recorder: @unchecked Sendable {
@@ -70,6 +75,21 @@ private func json(_ response: HostResponse) -> [String: Any] {
         }
         #expect(json(await relay.handle(Data(#"{"type":"open-app"}"#.utf8)))["ok"] as? Bool == true)
         #expect(opened.values == ["app"])
+    }
+
+    @Test func relaysHelperReports() async {
+        let agent = StubAgent()
+        let relay = HostRelay(agent: agent)
+        #expect(json(await relay.handle(Data(#"{"type":"helper-status","blocked":true}"#.utf8)))["ok"] as? Bool == true)
+        _ = await relay.handle(Data(#"{"type":"helper-status","blocked":false}"#.utf8))
+        #expect(agent.reported.values == ["blocked", "ok"])
+    }
+
+    @Test func rejectsHelperReportsThatDontSay() async {
+        let agent = StubAgent()
+        let reply = json(await HostRelay(agent: agent).handle(Data(#"{"type":"helper-status"}"#.utf8)))
+        #expect(reply["ok"] as? Bool == false)
+        #expect(agent.reported.values.isEmpty)
     }
 
     @Test func rejectsUnknownRequests() async {

@@ -22,6 +22,19 @@
 	<string>0.0.0</string>
 	<key>CFBundleVersion</key>
 	<string>0</string>
+	<!-- betterpasswords://connect, from the extension's welcome: connects the browser that opened it.
+	     It does nothing else, whoever opens it (see LinkRequests). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>io.github.fanckush.betterpasswords.connect</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>betterpasswords</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>

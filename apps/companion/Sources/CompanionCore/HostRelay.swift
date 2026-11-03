@@ -8,6 +8,7 @@ public struct HostRelay: Sendable {
         func readPairingCode() async -> Result<String, CompanionError>
         func myEmails() async -> Result<[String], CompanionError>
         func availableUpdate() async -> String?
+        func reportHelper(blocked: Bool) async -> Bool
     }
 
     let agent: any Agent
@@ -44,6 +45,11 @@ public struct HostRelay: Sendable {
             }
         case .openApp:
             return HostResponse(ok: openApp())
+        case .helperStatus:
+            guard let blocked = request.blocked else {
+                return HostResponse(ok: false, message: "say whether it's blocked")
+            }
+            return HostResponse(ok: await agent.reportHelper(blocked: blocked))
         case .myEmails:
             switch await agent.myEmails() {
             case .success(let emails):

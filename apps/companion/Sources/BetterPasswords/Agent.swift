@@ -6,6 +6,13 @@ import Foundation
 /// It holds the app's Accessibility permission, so the browser never needs it.
 enum Agent {
     static func run() -> Never {
+        // browsers installed since setup are connected without anyone opening the app
+        if Installation.isInApplications(Bundle.main.bundleURL, home: FileManager.default.homeDirectoryForCurrentUser) {
+            BrowserLinks().connectNew(
+                hostPath: Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/\(Identity.hostExecutableName)")
+                    .path,
+                support: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0])
+        }
         let delegate = ListenerDelegate()
         let listener = NSXPCListener(machServiceName: Identity.agentService)
         listener.delegate = delegate
@@ -73,6 +80,19 @@ final class AgentSession: NSObject, CompanionAgentProtocol, @unchecked Sendable 
     func availableUpdate(reply: @escaping @Sendable (String?) -> Void) {
         IdleExit.shared.touch()
         reply(UpdateCheck.shared.available())
+    }
+
+    func reportHelper(blocked: Bool, reply: @escaping @Sendable (Bool) -> Void) {
+        IdleExit.shared.touch()
+        // The host's parent is the browser. Not Processes.browser(behind:): it needs a running copy
+        // of Apple's helper, and in a blocked browser there is none. A program that runs our host
+        // itself is its parent, which isn't a known browser, so it can't record anything.
+        guard let parent = Processes.parent(of: caller), parent > 1,
+            let app = NSRunningApplication(processIdentifier: parent),
+            let browser = HostManifests.browser(bundleID: app.bundleIdentifier, name: app.localizedName)
+        else { return reply(false) }
+        BrowserLinks().setBlocked(browser.name, blocked)
+        reply(true)
     }
 
     func readPairingCode(reply: @escaping @Sendable (String?, String?) -> Void) {
