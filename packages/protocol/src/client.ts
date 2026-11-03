@@ -10,6 +10,9 @@ import {
   type Capabilities,
   Command,
   type HelperMessage,
+  type LoginEntry,
+  ONE_TIME_CODES_TYPE,
+  type OneTimeCodeEntry,
   PAKE_ERROR_INCORRECT_CODE,
   PakeMessage,
   PROTOCOL_VERSION,
@@ -65,6 +68,22 @@ export interface Credential {
   password: string;
 }
 
+/** A verification code saved in Apple Passwords (or, for other sources, received by the Mac). */
+export interface OneTimeCode {
+  /** Missing when the helper wants the user to authenticate before the code is shown. */
+  code: string | undefined;
+  username: string;
+  domain: string;
+  /** "totp" for codes generated from a saved setup key. */
+  source: string;
+}
+
+export interface OneTimeCodes {
+  codes: OneTimeCode[];
+  /** The helper asks for Touch ID (or the login password) before a code is filled. */
+  requiresAuthentication: boolean;
+}
+
 export interface ClientOptions {
   /** Sent as HSTBRSR; the helper uses it in the pairing window's wording. */
   browserName?: string;
@@ -105,6 +124,7 @@ export class ApplePasswordsClient {
   /** One queue per kind of request (see #serialized). */
   #queues = new Map<string, Promise<unknown>>();
   #stateListeners = new Set<(state: ClientState) => void>();
+  #codeListeners = new Set<() => void>();
 
   readonly #options: Required<ClientOptions>;
 
@@ -151,6 +171,12 @@ export class ApplePasswordsClient {
   onStateChange(listener: (state: ClientState) => void): () => void {
     this.#stateListeners.add(listener);
     return () => this.#stateListeners.delete(listener);
+  }
+
+  /** Called when the helper announces a new verification code, e.g. one that just arrived by SMS. */
+  onOneTimeCodeAvailable(listener: () => void): () => void {
+    this.#codeListeners.add(listener);
+    return () => this.#codeListeners.delete(listener);
   }
 
   /** Asks the helper to start pairing; macOS then shows a 6-digit code. */
@@ -278,6 +304,59 @@ export class ApplePasswordsClient {
   }
 
   /**
+   * Lists verification codes for a page. `frameURLs` are the frame's URL followed by its parents'.
+   * Without `username`, codes for every account on the site come back. Helpers that can't fill
+   * codes are never asked.
+   */
+  getOneTimeCodes(frameURLs: string[], tab: Tab, username?: string): Promise<OneTimeCodes> {
+    return this.#serialized("codes", async () => {
+      if (!this.#capabilities.canFillOneTimeCodes) return { codes: [], requiresAuthentication: false };
+      const reply = await this.#query<OneTimeCodeEntry>(Command.GetOneTimeCodes, undefined, tab, {
+        ACT: Action.GhostSearch,
+        TYPE: ONE_TIME_CODES_TYPE,
+        frameURLs,
+        ...(username ? { username } : {}),
+      });
+      return {
+        codes: (Array.isArray(reply.Entries) ? reply.Entries : []).flatMap(toOneTimeCode),
+        requiresAuthentication: reply.RequiresUserAuthenticationToFill === true,
+      };
+    });
+  }
+
+  /**
+   * The code to fill right now. For a TOTP code this reports the fill to the helper, whose reply
+   * carries the current code (and which may first ask for Touch ID, so there is no timeout).
+   * Other codes don't change and are returned as listed.
+   */
+  currentOneTimeCode(code: OneTimeCode, frameURLs: string[], tab: Tab): Promise<string | undefined> {
+    if (code.source !== "totp") return Promise.resolve(code.code);
+    // not serialized: like a password read, a new fill replaces one still waiting on Touch ID
+    return (async () => {
+      const reply = await this.#query<OneTimeCodeEntry>(
+        Command.DidFillOneTimeCode,
+        undefined,
+        tab,
+        {
+          ACT: Action.Search,
+          TYPE: ONE_TIME_CODES_TYPE,
+          frameURLs,
+          ...(code.username ? { username: code.username } : {}),
+        },
+        null,
+      );
+      const entries = (Array.isArray(reply.Entries) ? reply.Entries : []).flatMap(toOneTimeCode);
+      if (entries.length === 0) return undefined;
+      // a late answer to a replaced fill could arrive now: use only the account asked for
+      const match = entries.find(
+        (e) => e.source === code.source && e.username === code.username && e.domain === code.domain,
+      );
+      if (!match) throw new ProtocolError("reply for another code", "invalid-reply");
+      return match.code;
+    })();
+  }
+
+  /**
    * Opens Apple's Passwords app, searching for `url` when it is a web address. Works without
    * pairing, and the helper sends no reply.
    */
@@ -320,19 +399,21 @@ export class ApplePasswordsClient {
     this.#closed();
   }
 
-  async #query(
+  /** `hostname` goes along in clear as `url`, as Apple's extension sends it; code queries have none. */
+  async #query<Entry = LoginEntry>(
     cmd: keyof typeof QueryId,
-    hostname: string,
+    hostname: string | undefined,
     tab: { tabId: number; frameId?: number },
     body: Record<string, unknown>,
     timeoutMs?: number | null,
     alsoAccept: readonly number[] = [],
-  ): Promise<QueryReply> {
-    const message = { ...(await this.#secureMessage(cmd, tab, body)), url: hostname };
-    const result = await this.#openReply(await this.#request(message, timeoutMs));
+  ): Promise<QueryReply<Entry>> {
+    const secure = await this.#secureMessage(cmd, tab, body);
+    const message = hostname === undefined ? secure : { ...secure, url: hostname };
+    const result = (await this.#openReply(await this.#request(message, timeoutMs))) as QueryReply<Entry>;
 
     if (result.STATUS === QueryStatus.Success || alsoAccept.includes(result.STATUS)) return result;
-    if (result.STATUS === QueryStatus.NoResults) return { STATUS: result.STATUS, Entries: [] };
+    if (result.STATUS === QueryStatus.NoResults) return { ...result, Entries: [] };
     if (result.STATUS === QueryStatus.InvalidSession) this.#lock();
     throw new ProtocolError(`helper query failed (status ${result.STATUS})`, "query-failed");
   }
@@ -427,6 +508,9 @@ export class ApplePasswordsClient {
       return;
     }
     if (message.cmd === Command.PasswordsDisabled || message.cmd === Command.ReloginNeeded) this.#lock();
+    if (message.cmd === Command.OneTimeCodeAvailable && this.#state === "unlocked") {
+      for (const listener of this.#codeListeners) listener();
+    }
   }
 
   #lock(): void {
@@ -455,6 +539,22 @@ export class ApplePasswordsClient {
     this.#state = state;
     for (const listener of this.#stateListeners) listener(state);
   }
+}
+
+/** Keeps entries that name their source; a code is kept only if it looks like one. */
+function toOneTimeCode(entry: unknown): OneTimeCode[] {
+  if (typeof entry !== "object" || entry === null) return [];
+  const e = entry as OneTimeCodeEntry;
+  if (typeof e.source !== "string") return [];
+  const code = typeof e.code === "string" && /^[0-9A-Za-z]{4,16}$/.test(e.code) ? e.code : undefined;
+  return [
+    {
+      code,
+      username: typeof e.username === "string" ? e.username : "",
+      domain: typeof e.domain === "string" ? e.domain : "",
+      source: e.source,
+    },
+  ];
 }
 
 function requireString(value: unknown): string {

@@ -34,6 +34,7 @@ Visit [betterpasswords.app](https://betterpasswords.app) for an interactive dumm
 
 - ✏️ login suggestions
 - 🔐 password generatino on sign-ups
+- ⏱️ fill OTP codes
 - ✨ NO MORE 6 DIGIT CODES!! *
 - 💾 asks to save/update new logins you type (obviously)
 - ☁️ generate Hide My Email in email fields (needs iCloud+)

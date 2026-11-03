@@ -15,6 +15,12 @@ export type Request =
   /** `tabId` is required from the popup; the inline menu is always bound to its own tab. */
   | { type: "list-logins"; tabId?: number }
   | { type: "fill"; tabId: number; username: string }
+  /** Verification codes saved for the tab's site, without digits (see OneTimeCodesResult). */
+  | { type: "list-one-time-codes"; tabId?: number }
+  /** Fills a code into the tab's code field (from the popup); macOS asks for Touch ID first. */
+  | { type: "fill-one-time-code"; tabId: number; id: string }
+  /** The code's digits, for the popup to copy; macOS asks for Touch ID first. */
+  | { type: "copy-one-time-code"; tabId: number; id: string }
   | { type: "lock" }
   /** Ends the session and restarts the extension, installing the version the browser downloaded. */
   | { type: "install-update" }
@@ -22,6 +28,7 @@ export type Request =
   | { type: "set-settings"; settings: Partial<Settings> }
   // inline menu → background → content script of the same tab
   | { type: "fill-from-menu"; nonce: string; username: string }
+  | { type: "fill-one-time-code-from-menu"; nonce: string; id: string }
   | { type: "menu-resize"; nonce: string; height: number }
   | { type: "menu-close"; nonce: string }
   | { type: "menu-focus-field"; nonce: string }
@@ -86,6 +93,8 @@ export interface Settings {
   inlineMenu: boolean;
   /** Unlock with Touch ID through the companion app, when it is installed. */
   touchId: boolean;
+  /** Suggestions in verification code fields: the codes saved in Apple Passwords. */
+  oneTimeCodes: boolean;
   /** Suggestions when signing up: strong passwords, and the user's emails in email fields. */
   generatePasswords: boolean;
   /** Offer Hide My Email addresses on email fields (opt-in: uses icloud.com's web service). */
@@ -103,6 +112,7 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   lockOnScreenLock: false,
   inlineMenu: true,
+  oneTimeCodes: true,
   touchId: true,
   generatePasswords: true,
   hideMyEmail: false,
@@ -133,13 +143,29 @@ export interface LoginsResult {
   chosen?: string;
 }
 
+/** A verification code as pages of the extension see it: never its digits, which need Touch ID. */
+export interface OneTimeCodeView {
+  /** Names the code in requests to fill or copy it; the background looks it up again then. */
+  id: string;
+  username: string;
+  domain: string;
+}
+
+export interface OneTimeCodesResult {
+  /** Undefined when the tab is not a page we fill (e.g. chrome:// or plain http). */
+  hostname?: string;
+  codes: OneTimeCodeView[];
+  /** The account just signed in with in this tab, if known; its code is listed first. */
+  signedInAs?: string;
+}
+
 export interface AutofillStatus {
   /**
    * "logins": saved logins exist for this site; "generate": suggest a new password;
-   * "locked": pairing needed; "setup": this browser can't reach Apple Passwords yet;
-   * "none": stay out of the way.
+   * "codes": a verification code field; "locked": pairing needed; "setup": this browser can't
+   * reach Apple Passwords yet; "none": stay out of the way.
    */
-  show: "logins" | "generate" | "email" | "locked" | "setup" | "none";
+  show: "logins" | "generate" | "email" | "codes" | "locked" | "setup" | "none";
   /** For a menu to show: its nonce, which the background accepts from this tab's menu only. */
   nonce?: string;
 }
@@ -190,6 +216,10 @@ interface Responses {
   "list-logins": LoginsResult;
   fill: { result: string };
   "fill-from-menu": { result: string };
+  "list-one-time-codes": OneTimeCodesResult;
+  "fill-one-time-code": { result: string };
+  "copy-one-time-code": { code: string };
+  "fill-one-time-code-from-menu": { result: string };
   "get-settings": Settings;
   "set-settings": Settings;
   "autofill-status": AutofillStatus;
@@ -236,6 +266,12 @@ export type ContentMessage =
   | { type: "menu-fill-new-password"; nonce: string; origin: string; password: string }
   /** Fills an email address into the field the menu was opened on. */
   | { type: "menu-fill-email"; nonce: string; origin: string; email: string }
+  /** Whether the menu is (still) visible: asked before Touch ID, so a hidden menu never prompts. */
+  | { type: "menu-visible"; nonce: string }
+  /** Fills a verification code into the field the menu was opened on. */
+  | { type: "menu-fill-one-time-code"; nonce: string; origin: string; code: string }
+  /** Fills a verification code chosen in the popup into the page's code field. */
+  | { type: "fill-one-time-code"; origin: string; code: string }
   /** Apple Passwords has the generated password filled into this page. */
   | { type: "generated-password-saved"; password: string }
   /** Whether the sign-in with the login sent in this tab went through. Answered with a SignInState. */
@@ -263,7 +299,9 @@ export type MenuMessage =
   /** Also from the content script: the menu sits above its field, so it lists its items bottom-up. */
   | { type: "menu-placement"; nonce: string; above: boolean }
   /** Sent by the background to every extension page when the session unlocks or locks (say, from the popup). */
-  | { type: "session-changed"; unlocked: boolean };
+  | { type: "session-changed"; unlocked: boolean }
+  /** Sent by the background when Apple Passwords has a new verification code: list them again. */
+  | { type: "one-time-codes-changed" };
 
 export interface NewPasswordContext {
   rules: FieldRules;

@@ -1,4 +1,4 @@
-import { type FieldKind, fieldKind } from "@/src/autofill/fields.ts";
+import { type FieldKind, fieldKind, isOneTimeCodeField, oneTimeCodeGroup } from "@/src/autofill/fields.ts";
 import { MenuHost } from "@/src/autofill/menu-host.ts";
 import {
   isGone,
@@ -9,7 +9,14 @@ import {
   watchUntilGone,
 } from "@/src/autofill/submission.ts";
 import { FILL_MATCHES } from "@/src/config.ts";
-import { asksForUsername, fillCredentials, fillEmail, fillNewPassword, usernameNear } from "@/src/fill.ts";
+import {
+  asksForUsername,
+  fillCredentials,
+  fillEmail,
+  fillNewPassword,
+  fillOneTimeCode,
+  usernameNear,
+} from "@/src/fill.ts";
 import {
   type ContentMessage,
   type MenuMessage,
@@ -32,13 +39,25 @@ export default defineContentScript({
     let request = 0;
     // the field whose menu the user just dismissed; it stays closed there until they ask again
     let dismissed: HTMLInputElement | undefined;
+    // the same for a code split into one box per digit: all its boxes, which focus moves across
+    let dismissedCode = new Set<HTMLInputElement>();
+    // a code being filled moves focus from box to box: no menu for those
+    let fillingCode = false;
+
+    /** Keeps the menu closed on `field`, and on every box of its code if it's one. */
+    function dismiss(field: HTMLInputElement | undefined) {
+      dismissed = field;
+      dismissedCode = new Set(field && fieldKind(field) === "one-time-code" ? oneTimeCodeGroup(field) : []);
+    }
     // new-password fields by menu nonce: a save can outlast the menu (macOS asks the user first)
     const newPasswordFields = new Map<string, HTMLInputElement>();
     // the last generated password we filled: to recognise it, and to save it once the form is sent
     let generated: { field: HTMLInputElement; value: string; saved: boolean; username: string } | undefined;
 
     async function offer(field: HTMLInputElement, kind: FieldKind) {
-      if (menu.anchor === field || dismissed === field) return;
+      if (menu.anchor === field || dismissed === field || dismissedCode.has(field) || fillingCode) return;
+      // like Safari: a code is offered while the field is empty, not over one being typed
+      if (kind === "one-time-code" && oneTimeCodeGroup(field).some((box) => box.value !== "")) return;
       const ticket = ++request;
       const { show, nonce } = await send({ type: "autofill-status", kind }).catch(() => ({
         show: "none" as const,
@@ -57,6 +76,8 @@ export default defineContentScript({
         }
       } else if (show === "email" && kind === "email") {
         menu.open(field, "email", kind, nonce);
+      } else if (show === "codes" && kind === "one-time-code") {
+        menu.open(field, "codes", kind, nonce);
       } else if (show === "logins" || show === "generate" || show === "locked" || show === "setup") {
         // "locked" and "setup" too: login fields include guessed usernames, but only next to a
         // password field, and the email field is usually the first one people click
@@ -90,8 +111,9 @@ export default defineContentScript({
       document,
       "focusin",
       (event) => {
-        if (event.target === menu.element) return;
+        if (event.target === menu.element || fillingCode) return;
         if (event.target !== dismissed) dismissed = undefined;
+        if (!dismissedCode.has(event.target as HTMLInputElement)) dismissedCode.clear();
         if (!offerFor(event.target) && menu.isOpen) menu.close();
       },
       { capture: true },
@@ -104,8 +126,8 @@ export default defineContentScript({
         // clicking the field while nothing typed matches brings every login back
         if (menu.isOpen && !menu.isShowing && event.target === menu.anchor) filterMenu("");
         // clicking a field whose menu was dismissed asks for it again
-        if (event.target === dismissed) {
-          dismissed = undefined;
+        if (event.target === dismissed || dismissedCode.has(event.target as HTMLInputElement)) {
+          dismiss(undefined);
           offerFor(event.target);
         }
       },
@@ -115,15 +137,16 @@ export default defineContentScript({
       document,
       "keydown",
       (event) => {
-        if (event.key === "ArrowDown" && !menu.isOpen && event.target === dismissed) {
+        const wasDismissed = event.target === dismissed || dismissedCode.has(event.target as HTMLInputElement);
+        if (event.key === "ArrowDown" && !menu.isOpen && wasDismissed) {
           event.preventDefault();
-          dismissed = undefined;
+          dismiss(undefined);
           offerFor(event.target);
           return;
         }
         if (!menu.isOpen || event.target !== menu.anchor) return;
         if (event.key === "Escape") {
-          dismissed = menu.anchor;
+          dismiss(menu.anchor);
           menu.close();
         }
         // the arrow pointing at the menu leads into it (↑ when it sits above the field)
@@ -150,8 +173,9 @@ export default defineContentScript({
         if (kind === "login" && menu.anchor.type === "password") {
           tellMenu({ type: "menu-typing", typing: menu.anchor.value !== "" });
         }
-        if (kind !== "new-password") return;
-        dismissed = menu.anchor;
+        // typing a code of one's own (one sent by SMS, say) closes the suggestions too
+        if (kind !== "new-password" && kind !== "one-time-code") return;
+        dismiss(menu.anchor);
         menu.close();
       },
       { capture: true },
@@ -286,6 +310,18 @@ export default defineContentScript({
         sendResponse(signInState());
         return false;
       }
+      if (message.type === "fill-one-time-code") {
+        // from the popup: the focused code field, else the page's first one
+        const focused = document.activeElement;
+        const field =
+          focused instanceof HTMLInputElement && isOneTimeCodeField(focused)
+            ? focused
+            : Array.from(document.querySelectorAll("input")).find(
+                (el) => fieldKind(el) === "one-time-code" && !isGone(el),
+              );
+        sendResponse({ result: field ? fillCode(message.origin, message.code, field) : "no-fields" });
+        return false;
+      }
       if (!menu.isCurrent(message.nonce)) return false;
       switch (message.type) {
         case "menu-resize":
@@ -337,6 +373,19 @@ export default defineContentScript({
           sendResponse({ result });
           return false;
         }
+        case "menu-visible":
+          sendResponse(menu.isTrustworthy());
+          return false;
+        case "menu-fill-one-time-code": {
+          const anchor = menu.anchor;
+          if (!anchor || !menu.isTrustworthy()) {
+            sendResponse({ result: "menu-hidden" });
+            menu.close();
+            return false;
+          }
+          sendResponse({ result: fillCode(message.origin, message.code, anchor) });
+          return false;
+        }
         case "menu-fill": {
           const anchor = menu.anchor;
           if (!anchor || !menu.isTrustworthy()) {
@@ -355,6 +404,19 @@ export default defineContentScript({
         }
       }
     });
+
+    /** Fills a code; the menu stays closed on its boxes, which the fill focuses one by one. */
+    function fillCode(origin: string, code: string, field: HTMLInputElement) {
+      fillingCode = true;
+      try {
+        const result = fillOneTimeCode(origin, code, field);
+        dismiss(field);
+        menu.close();
+        return result;
+      } finally {
+        fillingCode = false;
+      }
+    }
 
     offerFor(document.activeElement);
   },

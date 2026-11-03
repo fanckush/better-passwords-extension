@@ -28,6 +28,7 @@ The product name is **Better Passwords**. Use the separate compatibility line:
 > • Fill from the toolbar button
 > • Generate strong passwords for sign-up forms and save them to Apple Passwords
 > • Save new logins and changed passwords to Apple Passwords after you sign in
+> • Fill two-factor verification codes saved in Apple Passwords
 > • Use Hide My Email in email fields (optional; requires iCloud+)
 > • Open the Passwords app for the current site
 > • Lock any time; on Chromium browsers, optionally lock when your Mac locks

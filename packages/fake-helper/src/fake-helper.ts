@@ -20,6 +20,7 @@ import {
   constantTimeEqual,
   type HelperMessage,
   type LoginEntry,
+  type OneTimeCodeEntry,
   PAKE_ERROR_INCORRECT_CODE,
   PakeMessage,
   pake,
@@ -31,11 +32,14 @@ import {
   server,
   sha256,
 } from "@app/protocol";
+import { type TotpOptions, totp } from "./totp.ts";
 
 export interface VaultEntry {
   hostname: string;
   username: string;
   password: string;
+  /** A verification code set up for this login. */
+  totp?: { secret: string } & TotpOptions;
 }
 
 export interface FakeHelperOptions {
@@ -46,6 +50,15 @@ export interface FakeHelperOptions {
   capabilities?: Capabilities;
   /** Answer macOS's "Save password?" prompt with Don't Save. */
   declineSaves?: boolean;
+  /** The clock for verification codes. */
+  now?: () => number;
+  /**
+   * Like the real helper (macOS 27), ask for Touch ID before filling a verification code: lists
+   * then carry no digits, and only a reported fill returns the code. Default true.
+   */
+  requiresAuthenticationForCodes?: boolean;
+  /** Answer requests for verification codes with this reply instead, to play an odd helper. */
+  oneTimeCodesReply?: Record<string, unknown>;
 }
 
 interface Handshake {
@@ -65,10 +78,17 @@ export class FakeHelper {
   readonly saved: VaultEntry[] = [];
   /** The search URL of every request to open the Passwords app ("" when none). */
   readonly passwordsAppLaunches: string[] = [];
+  /** Every request to list verification codes: the frame URLs and the username asked for. */
+  readonly oneTimeCodeReads: { frameURLs: string[]; username?: string }[] = [];
+  /** Every reported fill of a verification code. */
+  readonly oneTimeCodeFills: { frameURLs: string[]; username?: string }[] = [];
   readonly #fixedCode: string | undefined;
   readonly #codec: BinaryCodec;
   readonly #capabilities: Capabilities;
   readonly #declineSaves: boolean;
+  readonly #now: () => number;
+  readonly #codesNeedAuthentication: boolean;
+  readonly #codesReply: Record<string, unknown> | undefined;
   #handshake: Handshake | undefined;
   #session: { tid: string; channel: SecureChannel } | undefined;
   /** The code the "pairing window" currently shows, if any. */
@@ -79,10 +99,13 @@ export class FakeHelper {
     this.vault = (options.vault ?? []).map((entry) => ({ ...entry }));
     this.#fixedCode = options.code;
     this.#declineSaves = options.declineSaves ?? false;
+    this.#now = options.now ?? Date.now;
+    this.#codesNeedAuthentication = options.requiresAuthenticationForCodes ?? true;
+    this.#codesReply = options.oneTimeCodesReply;
     this.#codec = new BinaryCodec(options.base64 ?? true);
     this.#capabilities = {
       shouldUseBase64: options.base64 ?? true,
-      canFillOneTimeCodes: false,
+      canFillOneTimeCodes: true,
       ...options.capabilities,
     };
   }
@@ -99,6 +122,9 @@ export class FakeHelper {
         return [await this.#query(message)];
       case Command.SetPassword:
         return this.#save(message);
+      case Command.GetOneTimeCodes:
+      case Command.DidFillOneTimeCode:
+        return this.#oneTimeCodes(message);
       case Command.LaunchPasswordsApp:
         this.passwordsAppLaunches.push(typeof message.searchQueryURL === "string" ? message.searchQueryURL : "");
         return [];
@@ -111,6 +137,11 @@ export class FakeHelper {
   invalidateSession(): HelperMessage {
     this.#session = undefined;
     return { cmd: Command.ReloginNeeded };
+  }
+
+  /** Simulates a new verification code arriving: the helper tells the extension, without data. */
+  announceOneTimeCode(): HelperMessage {
+    return { cmd: Command.OneTimeCodeAvailable };
   }
 
   async #handshakeStep(message: HelperMessage): Promise<HelperMessage> {
@@ -202,6 +233,41 @@ export class FakeHelper {
     const result =
       entries.length > 0 ? { STATUS: QueryStatus.Success, Entries: entries } : { STATUS: QueryStatus.NoResults };
     return this.#reply(session, message, message.cmd, result);
+  }
+
+  /**
+   * Lists codes (16) or reports a fill (17). Both answer with the codes current now, but a list
+   * withholds the digits while authentication is required, as the real helper does.
+   */
+  async #oneTimeCodes(message: HelperMessage): Promise<HelperMessage[]> {
+    const opened = await this.#open<{ TYPE?: string; frameURLs?: string[]; username?: string }>(message);
+    if (!opened) return [{ cmd: message.cmd, payload: { SMSG: JSON.stringify({ TID: "", SDATA: "" }) } }];
+    const { session, request } = opened;
+    const frameURLs = request.frameURLs ?? [];
+    const asked = { frameURLs, ...(request.username ? { username: request.username } : {}) };
+    (message.cmd === Command.GetOneTimeCodes ? this.oneTimeCodeReads : this.oneTimeCodeFills).push(asked);
+    if (this.#codesReply) return [await this.#reply(session, message, message.cmd, this.#codesReply)];
+    if (request.TYPE !== "oneTimeCodes") {
+      return [await this.#reply(session, message, message.cmd, { STATUS: QueryStatus.InvalidParam })];
+    }
+    const hostnames = new Set(frameURLs.flatMap((url) => (URL.canParse(url) ? [new URL(url).hostname] : [])));
+    const entries: OneTimeCodeEntry[] = [];
+    for (const e of this.vault) {
+      if (!e.totp || !hostnames.has(e.hostname)) continue;
+      if (request.username && e.username !== request.username) continue;
+      const hidden = this.#codesNeedAuthentication && message.cmd === Command.GetOneTimeCodes;
+      const code = hidden ? null : await totp(e.totp.secret, this.#now(), e.totp);
+      entries.push({ code, username: e.username, domain: e.hostname, source: "totp" });
+    }
+    const result =
+      entries.length > 0
+        ? {
+            STATUS: QueryStatus.Success,
+            Entries: entries,
+            ...(this.#codesNeedAuthentication ? { RequiresUserAuthenticationToFill: true } : {}),
+          }
+        : { STATUS: QueryStatus.NoResults };
+    return [await this.#reply(session, message, message.cmd, result)];
   }
 
   /**

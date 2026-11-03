@@ -1,13 +1,13 @@
 import "./style.css";
 import { DISPLAY_NAME } from "@/src/config.ts";
 import { requestHideMyEmailConsent } from "@/src/icloud/consent.ts";
-import type { EmailSuggestions, GeneratedPasswords, MenuMessage } from "@/src/messages.ts";
+import type { EmailSuggestions, GeneratedPasswords, MenuMessage, OneTimeCodeView } from "@/src/messages.ts";
 import { bindToMenu, send } from "@/src/messages.ts";
 import { applySystemAccent } from "@/src/ui/accent.ts";
 import { bindCodeInput } from "@/src/ui/code-input.ts";
 import { companionPitch } from "@/src/ui/companion-pitch.ts";
 import { h } from "@/src/ui/h.ts";
-import { CANCEL, CHECK, ENVELOPE, EYE, icon, KEY, LOCK, OPEN, PERSON, REFRESH } from "@/src/ui/icons.ts";
+import { CANCEL, CHECK, ENVELOPE, EYE, icon, KEY, LOCK, OPEN, PERSON, REFRESH, TIMER } from "@/src/ui/icons.ts";
 
 // The inline menu, shown in an iframe under a login field. It is an extension page, so the web
 // page can't read the usernames shown here or listen to keys typed into the code field.
@@ -17,7 +17,10 @@ applySystemAccent();
 const params = new URLSearchParams(window.location.hash.slice(1));
 const nonce = params.get("nonce") ?? "";
 bindToMenu(nonce);
-/** The field the menu belongs to: "login", or "new-password" for sign-up and change-password forms. */
+/**
+ * The field the menu belongs to: "login", "new-password" for sign-up and change-password forms,
+ * "email", or "one-time-code" for a sign-in's verification code.
+ */
 const kind = params.get("kind") ?? "login";
 /** Whether the menu is on a password field, rather than a username one. */
 const onPasswordField = params.get("field") === "password";
@@ -152,14 +155,14 @@ function renderLogins() {
   const shown = focused ? matches.slice(0, 1) : matches;
   render(
     ...shown.map(({ username }) => row(KEY, username || "(no username)", hostname, () => void fill(username))),
-    focused ? othersRow(matches.length - 1) : null,
+    focused ? othersRow(matches.length - 1, renderLogins) : null,
     error ? message(error, true) : null,
     h("hr", { class: "separator" }),
     openPasswordsRow(false),
   );
 }
 
-function othersRow(count: number) {
+function othersRow(count: number, showAll: () => void) {
   const button = h("button", {
     class: "row others",
     textContent: count === 1 ? "1 other account" : `${count} other accounts`,
@@ -167,11 +170,75 @@ function othersRow(count: number) {
   });
   button.addEventListener("click", () => {
     showOthers = true;
-    renderLogins();
+    showAll();
     // keyboard users carry on at the first account that just appeared
     panel.querySelectorAll<HTMLElement>(".row")[1]?.focus();
   });
   return button;
+}
+
+// the verification codes shown; the digits never reach the menu, only the account and site
+let codesView: { codes: OneTimeCodeView[]; hostname: string; signedInAs?: string; note?: string } | undefined;
+
+async function showCodes(error?: string) {
+  view = "unlocked";
+  let result: Awaited<ReturnType<typeof send<{ type: "list-one-time-codes" }>>>;
+  try {
+    result = await send({ type: "list-one-time-codes" });
+  } catch (e) {
+    return render(message(messageOf(e), true));
+  }
+  if (result.codes.length === 0) {
+    codesView = undefined;
+    return render(message(`No verification codes for ${result.hostname ?? "this site"}.`), openPasswordsRow(false));
+  }
+  codesView = {
+    codes: result.codes,
+    hostname: result.hostname ?? "",
+    ...(result.signedInAs !== undefined ? { signedInAs: result.signedInAs } : {}),
+    ...(error ? { note: error } : {}),
+  };
+  renderCodes();
+}
+
+function renderCodes(note = codesView?.note, isError = true) {
+  if (!codesView) return;
+  const { codes, signedInAs } = codesView;
+  // right after signing in: that account's code, the others a click away
+  const current = signedInAs?.toLowerCase();
+  const focused =
+    current !== undefined && codes[0]?.username.toLowerCase() === current && !showOthers && codes.length > 1;
+  const shown = focused ? codes.slice(0, 1) : codes;
+  render(
+    ...shown.map((code) =>
+      row(
+        TIMER,
+        "Verification Code",
+        code.username ? `${code.username} · ${code.domain}` : code.domain,
+        () => void fillCode(code),
+      ),
+    ),
+    focused ? othersRow(codes.length - 1, () => renderCodes(undefined)) : null,
+    note ? message(note, isError) : null,
+    h("hr", { class: "separator" }),
+    openPasswordsRow(false),
+  );
+}
+
+async function fillCode(code: OneTimeCodeView) {
+  // macOS asks for Touch ID before Apple Passwords gives the code; the rows stay, to choose again
+  const focusedIndex = Array.from(panel.querySelectorAll(".row")).indexOf(document.activeElement as Element);
+  renderCodes("Confirm with Touch ID…", false);
+  panel.querySelectorAll<HTMLElement>(".row")[Math.max(focusedIndex, 0)]?.focus();
+  try {
+    const { result } = await send({ type: "fill-one-time-code-from-menu", nonce, id: code.id });
+    // when filled, the content script closes the menu
+    if (result !== "filled") await showCodes(fillError(result));
+  } catch (e) {
+    // chosen again (say, after dismissing Touch ID): that newer choice carries on
+    if ((e as { code?: string }).code === "superseded") return;
+    await showCodes(messageOf(e));
+  }
 }
 
 browser.runtime.onMessage.addListener((request: MenuMessage, sender) => {
@@ -203,6 +270,10 @@ browser.runtime.onMessage.addListener((request: MenuMessage, sender) => {
   if (request.type === "session-changed") {
     if (request.unlocked) void unlocked();
     else if (view === "unlocked") void showLocked();
+  }
+  // a new code arrived (by SMS, say): list them again, unless one is being filled
+  if (request.type === "one-time-codes-changed" && kind === "one-time-code" && view === "unlocked") {
+    if (!panel.textContent?.includes("Confirm with Touch ID")) void showCodes();
   }
   return false;
 });
@@ -495,6 +566,7 @@ async function useAddress(address: string, reserve: boolean) {
 /** After unlocking, here or elsewhere: the menu's real content, if it was waiting for that. */
 async function unlocked() {
   if (view !== "locked") return;
+  if (kind === "one-time-code") return showCodes();
   await (kind === "new-password" ? showGenerate() : showLogins());
 }
 
@@ -548,6 +620,7 @@ function showSetup() {
 }
 
 function unlockTitle() {
+  if (kind === "one-time-code") return "Unlock to fill verification codes";
   return kind === "new-password" ? "Unlock to suggest a strong password" : "Unlock to fill passwords";
 }
 
@@ -645,5 +718,6 @@ if (mode === "locked") void showLocked();
 else if (mode === "setup") showSetup();
 else if (mode === "generate") void showGenerate();
 else if (mode === "email") void showEmail();
+else if (mode === "codes") void showCodes();
 else if (mode === "generated" || mode === "generated-unsaved") showGeneratedDone(mode === "generated");
 else void showLogins();

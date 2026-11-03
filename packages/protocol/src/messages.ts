@@ -14,6 +14,11 @@ export const Command = {
   ReloginNeeded: 10,
   LaunchPasswordsApp: 13,
   GetCapabilities: 14,
+  /** From the helper, unprompted: a new verification code arrived, so lists of codes are stale. */
+  OneTimeCodeAvailable: 15,
+  GetOneTimeCodes: 16,
+  /** Reports a filled TOTP code; the reply carries the code current at that moment. */
+  DidFillOneTimeCode: 17,
 } as const;
 export type Command = (typeof Command)[keyof typeof Command];
 
@@ -21,6 +26,8 @@ export const QueryId = {
   [Command.GetLoginNamesForUrl]: "CmdGetLoginNames4URL",
   [Command.GetPasswordForLoginName]: "CmdGetPassword4LoginName",
   [Command.SetPassword]: "CmdNewAccount4URL",
+  [Command.GetOneTimeCodes]: "CmdGetOneTimeCodes",
+  [Command.DidFillOneTimeCode]: "CmdDidFillOneTimeCode",
 } as const;
 
 /** PAKE message types inside the handshake. */
@@ -98,10 +105,25 @@ export interface LoginEntry {
   PWD?: string;
 }
 
-export interface QueryReply {
+export interface QueryReply<Entry = LoginEntry> {
   STATUS: number;
-  Entries?: LoginEntry[];
+  Entries?: Entry[];
+  [key: string]: unknown;
 }
+
+/**
+ * One verification code as the helper sends it. Lists carry `code: null` while the helper wants
+ * Touch ID first (`RequiresUserAuthenticationToFill`); a reported fill carries the digits.
+ */
+export interface OneTimeCodeEntry {
+  code?: string | null;
+  username?: string;
+  domain?: string;
+  source?: string;
+}
+
+/** The body of encrypted one-time-code requests (commands 16 and 17). */
+export const ONE_TIME_CODES_TYPE = "oneTimeCodes";
 
 /** PAKE payloads travel as base64-encoded JSON. */
 export const pake = {

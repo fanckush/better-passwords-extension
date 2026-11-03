@@ -15,6 +15,9 @@ Chrome native messaging: every message is a 32-bit little-endian length followed
 | 4 | List login names for a URL (encrypted) |
 | 5 | Get the password for a login name (encrypted; may trigger Touch ID) |
 | 13 | Open the Passwords app; optional `searchQueryURL` (an http(s) URL) searches for that site. Plain, needs no pairing, no reply |
+| 16 | List verification codes for a page (encrypted; see [Verification codes](#verification-codes)) |
+| 17 | Report a filled verification code; the reply carries its digits (encrypted; asks for Touch ID) |
+| 15 | From the helper: a new verification code is available, so lists of codes are stale (no data) |
 | 9 / 10 | From the helper: passwords disabled / re-login needed, so drop the session |
 | 0 | End |
 
@@ -25,9 +28,9 @@ Apple's extension (3.4) also sends these. They're recorded here for later featur
 | `cmd` | QID | Encrypted body | Purpose |
 |---|---|---|---|
 | 6 | `CmdNewAccount4URL` or `CmdSetPassword4LoginName_URL` | `ACT: 4` (maybe add), `URL`/`USR`/`PWD` empty, `NURL`, `NUSR`, `NPWD` | Save a new or changed password |
-| 16 | `CmdGetOneTimeCodes` | `ACT: 5`, `TYPE: "oneTimeCodes"`, `frameURLs` (the frame and its parents), optional `username` | Verification codes (TOTP) saved in Apple Passwords |
-| 17 | `CmdDidFillOneTimeCode` | `ACT: 2`, `TYPE: "oneTimeCodes"`, `frameURLs`, optional `username` | Report that a TOTP code was filled |
 | 1984 | – (plain `url`) | – | Open a URL in Safari |
+
+Apple's extension also scans pages for `otpauth:` QR codes to set up new codes (capability `scanForOTPURI`, sent through cmd 13 with `setUpTOTPPageURL`/`setUpTOTPURI`). That isn't used.
 
 Actions (`ACT`): 0 delete, 1 update, 2 search, 3 add new, 4 maybe add, 5 ghost search. The capabilities reply flags which features the helper supports, e.g. `canFillOneTimeCodes` and `canSaveAccountWithEmptyUserName`.
 
@@ -58,3 +61,21 @@ The AES-128-GCM key is the first 16 bytes of `K`, with a 16-byte IV and a 128-bi
 - reply: `IV‖ciphertext‖tag`
 
 The query body goes in `payload.SMSG = JSON.stringify({ TID: username, SDATA: encode(encrypted) })`. The decrypted reply is `{ STATUS, Entries: [{ USR, PWD?, sites }] }`, where `STATUS` 0 means success and 3 means no results.
+
+## Verification codes
+
+Checked against the live helper on macOS 27.0.1, with a GitHub verification code saved in Apple Passwords. The helper reported `canFillOneTimeCodes: true` to an extension with its own ID.
+
+**Listing (cmd 16, QID `CmdGetOneTimeCodes`).** The encrypted body is `{ ACT: 5, TYPE: "oneTimeCodes", frameURLs, username? }`. `frameURLs` lists the frame's URL followed by its parents' URLs. Without `username`, every account's codes for the site come back. Apple's extension sends no top-level `url`, and neither do we. The reply:
+
+```json
+{ "STATUS": 0, "RequiresUserAuthenticationToFill": true,
+  "Entries": [{ "code": null, "username": "…", "domain": "github.com", "source": "totp" }] }
+```
+
+While `RequiresUserAuthenticationToFill` is set, `code` is `null`. A list never reveals digits, even right after a fill. No entry carries a period or an expiry.
+
+**Filling (cmd 17, QID `CmdDidFillOneTimeCode`).** The body is the same, with `ACT: 2` and the `username` of the code being filled. macOS asks for Touch ID, and the reply only comes once the user approves. Each fill asked again. The reply has the same shape as a list, with the current digits in `code`. It also has a stray `Entry_0` field, which we ignore. The client fills the entry whose `source`, `username` and `domain` match the code asked for, so a late reply for another account is refused. Apple's extension sends cmd 17 only for `source: "totp"`; any other source's code is used as listed.
+
+**Cmd 15** arrives from the helper without data. Apple's extension lists codes again when it gets one. It probably signals a code that arrived by SMS. We haven't seen one yet.
+

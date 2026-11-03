@@ -1,12 +1,12 @@
 import "./style.css";
 import { DISPLAY_NAME } from "@/src/config.ts";
 import { requestHideMyEmailConsent } from "@/src/icloud/consent.ts";
-import { type LoginsResult, type Settings, type Status, send } from "@/src/messages.ts";
+import { type LoginsResult, type OneTimeCodesResult, type Settings, type Status, send } from "@/src/messages.ts";
 import { applySystemAccent } from "@/src/ui/accent.ts";
 import { bindCodeInput } from "@/src/ui/code-input.ts";
 import { companionPitch } from "@/src/ui/companion-pitch.ts";
 import { h } from "@/src/ui/h.ts";
-import { CHECK, icon, OPEN } from "@/src/ui/icons.ts";
+import { CHECK, icon, OPEN, TIMER } from "@/src/ui/icons.ts";
 import { reportProblem } from "@/src/ui/report.ts";
 import { setupFlow } from "@/src/ui/setup.ts";
 
@@ -207,6 +207,7 @@ async function showLogins(status: Status, error?: string) {
     h("h1", { textContent: result.hostname ?? DISPLAY_NAME }),
     allSet,
     extensionUpdate(status.extensionUpdate),
+    tabId === undefined || !result.hostname ? null : await oneTimeCodes(tabId),
     body,
     await unconfirmedPasswords(tabId),
     errorLine(error),
@@ -299,6 +300,104 @@ function loginList(tabId: number, logins: LoginsResult["logins"], chosen?: strin
   );
 }
 
+/** How long a code fetched for Copy waits for a second click, when the first one couldn't copy it. */
+const COPY_WAIT_MS = 30_000;
+
+/**
+ * The site's verification codes. Their digits only come after Touch ID: clicking a code fills
+ * the page's code field, Copy puts it on the clipboard.
+ */
+async function oneTimeCodes(tabId: number) {
+  let result: OneTimeCodesResult;
+  try {
+    result = await send({ type: "list-one-time-codes", tabId });
+  } catch {
+    return null;
+  }
+  if (result.codes.length === 0) return null;
+  const note = h("p", { class: "hint", hidden: true });
+  const say = (text: string, isError = false) => {
+    note.textContent = text;
+    note.className = isError ? "hint error" : "hint";
+    note.hidden = !text;
+  };
+  const items = result.codes.map((code) => {
+    const account = code.username ? `${code.username} · ${code.domain}` : code.domain;
+    const fillButton = h(
+      "button",
+      { class: "login", title: "Fill this code into the page" },
+      h("span", { class: "avatar" }, icon(TIMER)),
+      h(
+        "span",
+        { class: "name" },
+        h("span", { textContent: "Verification Code" }),
+        h("span", { class: "detail", textContent: account }),
+      ),
+    );
+    fillButton.addEventListener("click", async () => {
+      say("Confirm with Touch ID…");
+      try {
+        const { result: filled } = await send({ type: "fill-one-time-code", tabId, id: code.id });
+        if (filled === "filled") return window.close();
+        say(
+          filled === "no-fields"
+            ? "No verification code field on this page. Copy the code instead."
+            : "The page changed, try again.",
+          true,
+        );
+      } catch (e) {
+        if ((e as { code?: string }).code === "superseded") return;
+        say(messageOf(e), true);
+      }
+    });
+
+    const copy = h("button", { class: "secondary", textContent: "Copy" });
+    // fetched, but the browser wouldn't let us copy it any more (Touch ID took a while)
+    let waiting: { digits: string; timer: ReturnType<typeof setTimeout> } | undefined;
+    const forget = () => {
+      if (waiting) clearTimeout(waiting.timer);
+      waiting = undefined;
+    };
+    const write = async (digits: string) => {
+      await navigator.clipboard.writeText(digits);
+      forget();
+      copy.textContent = "Copied";
+      say("");
+    };
+    copy.addEventListener("click", async () => {
+      if (waiting) return write(waiting.digits).catch((e) => say(messageOf(e), true));
+      copy.disabled = true;
+      say("Confirm with Touch ID…");
+      try {
+        const { code: digits } = await send({ type: "copy-one-time-code", tabId, id: code.id });
+        await write(digits).catch(() => {
+          waiting = {
+            digits,
+            timer: setTimeout(() => {
+              forget();
+              copy.textContent = "Copy";
+            }, COPY_WAIT_MS),
+          };
+          copy.textContent = "Click to Copy";
+          say("");
+        });
+      } catch (e) {
+        if ((e as { code?: string }).code !== "superseded") say(messageOf(e), true);
+      } finally {
+        copy.disabled = false;
+      }
+    });
+    return h("li", { class: "code-item" }, fillButton, copy);
+  });
+  return h(
+    "section",
+    { class: "recent codes" },
+    h("h2", { textContent: "Verification Codes" }),
+    h("ul", { class: "card" }, ...items),
+    note,
+  );
+}
+
 /**
  * Generated passwords that replaced a saved one on this site. Apple's helper can't confirm the
  * update, so if the user didn't click Update Password, this is where the new password still is.
@@ -374,6 +473,7 @@ async function footer(status: Status) {
     { class: "settings" },
     h("h2", { textContent: "Suggestions" }),
     option("inlineMenu", "When signing in", "saved passwords"),
+    option("oneTimeCodes", "Verification codes", "when a site asks for one"),
     option("generatePasswords", "When signing up", "strong passwords and emails"),
     option("hideMyEmail", "Hide My Email", "iCloud+ addresses, labeled with the site's name"),
     h("hr"),

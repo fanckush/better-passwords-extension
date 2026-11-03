@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Test two-factor sign-in</title>
+    <style>
+      body { font: 16px system-ui; padding: 40px; }
+      input { display: block; margin: 8px 0 16px; padding: 6px; width: 260px; }
+      .digits { display: flex; gap: 6px; }
+      .digits input { width: 28px; margin: 0; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <!-- a sign-in, then a verification code on its own step: marked (the default), unmarked
+         (?variant=heuristic), or one box per digit that moves on by itself (?variant=split) -->
+    <form id="sign-in">
+      <label>Username <input id="user" autocomplete="username" /></label>
+      <label>Password <input id="pass" type="password" autocomplete="current-password" /></label>
+      <button id="sign-in-button" type="button">Sign in</button>
+    </form>
+    <p>Submitted: <span id="submitted">0</span></p>
+    <script>
+      const variant = new URLSearchParams(location.search).get("variant") ?? "marked";
+      const fields = {
+        marked: '<label>Authentication code <input id="code" autocomplete="one-time-code" inputmode="numeric" maxlength="6" /></label>',
+        heuristic: '<label>Enter the code <input id="code" name="otp_code" inputmode="numeric" maxlength="6" /></label>',
+        split: `<div class="digits">${Array.from({ length: 6 }, (_, i) => `<input id="d${i}" maxlength="1" inputmode="numeric" aria-label="Digit ${i + 1}" />`).join("")}</div>`,
+      };
+      document.getElementById("sign-in-button").addEventListener("click", () => {
+        const step = document.createElement("form");
+        step.id = "two-factor";
+        step.innerHTML = `<h2>Two-factor authentication</h2>${fields[variant]}<button>Verify</button>`;
+        step.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const count = document.getElementById("submitted");
+          count.textContent = String(Number(count.textContent) + 1);
+        });
+        // like most split-code widgets: a typed digit moves focus to the next box
+        step.addEventListener("input", (event) => {
+          const box = event.target;
+          if (box.maxLength === 1 && box.value) box.nextElementSibling?.focus();
+        });
+        document.getElementById("sign-in").replaceWith(step);
+      });
+    </script>
+  </body>
+</html>

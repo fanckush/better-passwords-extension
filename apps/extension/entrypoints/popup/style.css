@@ -379,3 +379,37 @@ button.with-icon svg {
   height: 12px;
   fill: currentColor;
 }
+
+/* a verification code: fill it (the row) or copy it (the button) */
+.codes li.code-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+}
+
+.codes .login {
+  flex: 1;
+  min-width: 0;
+}
+
+.codes .avatar svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.codes .login .name {
+  display: grid;
+}
+
+.codes .login .detail {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.codes button.secondary {
+  flex: none;
+}

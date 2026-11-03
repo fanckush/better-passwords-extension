@@ -6,7 +6,15 @@ import type { FieldKind } from "./fields.ts";
 import { isMenuGenuinelyVisible, VisibilityWatch } from "./visibility.ts";
 
 /** "generated": the field holds a strong password we filled in (and saved, unless "-unsaved"). */
-export type MenuMode = "logins" | "generate" | "generated" | "generated-unsaved" | "email" | "locked" | "setup";
+export type MenuMode =
+  | "logins"
+  | "generate"
+  | "generated"
+  | "generated-unsaved"
+  | "email"
+  | "codes"
+  | "locked"
+  | "setup";
 
 const WIDTH = 300;
 const GAP = 4;

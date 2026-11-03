@@ -1,4 +1,4 @@
-import { isNewPasswordField } from "./autofill/fields.ts";
+import { isNewPasswordField, isOneTimeCodeField, oneTimeCodeGroup } from "./autofill/fields.ts";
 
 // fillCredentials runs inside the page: injected by scripting.executeScript (popup) or called by the
 // autofill content script (inline menu), so it must not reference anything outside its own body.
@@ -96,6 +96,53 @@ export function fillEmail(expectedOrigin: string, email: string, field: HTMLInpu
   if (!field.isConnected || !isFillable(field)) return "no-fields";
   setInputValue(field, email);
   return "filled";
+}
+
+/**
+ * Fills a verification code into the field the menu was opened on, or across its boxes when the
+ * code is split into one box per character. Focus stays in the code field, so Enter submits, but
+ * nothing is ever submitted for the user.
+ */
+export function fillOneTimeCode(expectedOrigin: string, code: string, anchor: HTMLInputElement): FillResult {
+  if (window.location.origin !== expectedOrigin) return "origin-mismatch";
+  if (!anchor.isConnected || !isFillable(anchor) || !isOneTimeCodeField(anchor)) return "no-fields";
+  const boxes = oneTimeCodeGroup(anchor).filter(isFillable);
+  if (boxes.length > 1) {
+    // widgets move focus from box to box themselves; focusing each first keeps them in step
+    boxes.forEach((box, i) => {
+      box.focus();
+      setInputValue(box, "");
+      typeInto(box, code[i] ?? "");
+    });
+    return "filled";
+  }
+  anchor.focus();
+  setInputValue(anchor, code);
+  // a framework that keeps its own state may undo a set value (or strip it): type it instead
+  if (anchor.value !== code) {
+    setInputValue(anchor, "");
+    typeInto(anchor, code);
+  }
+  return "filled";
+}
+
+/** Types `text` key by key, with the events a page's own keyboard handling listens for. */
+function typeInto(el: HTMLInputElement, text: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  for (const key of text) {
+    const init = { key, bubbles: true, cancelable: true, composed: true };
+    if (!el.dispatchEvent(new KeyboardEvent("keydown", init))) continue;
+    el.dispatchEvent(new KeyboardEvent("keypress", init));
+    const insert = { inputType: "insertText", data: key, bubbles: true, cancelable: true, composed: true };
+    if (el.dispatchEvent(new InputEvent("beforeinput", insert))) {
+      const next = el.value + key;
+      if (setter) setter.call(el, next);
+      else el.value = next;
+      el.dispatchEvent(new InputEvent("input", { ...insert, cancelable: false }));
+    }
+    el.dispatchEvent(new KeyboardEvent("keyup", init));
+  }
+  el.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 /** The username or email typed into the same form as `anchor`, if any. */

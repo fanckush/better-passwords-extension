@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { asksForUsername, fillCredentials, fillEmail, fillNewPassword, usernameNear } from "../src/fill.ts";
+import {
+  asksForUsername,
+  fillCredentials,
+  fillEmail,
+  fillNewPassword,
+  fillOneTimeCode,
+  usernameNear,
+} from "../src/fill.ts";
 
 const origin = window.location.origin;
 
@@ -188,5 +195,67 @@ describe("usernameNear", () => {
   it("is empty when nothing is typed yet", () => {
     page(`<form><input type="email"><input id="p" type="password"></form>`);
     expect(usernameNear(document.querySelector("#p") as HTMLInputElement)).toBe("");
+  });
+});
+
+describe("fillOneTimeCode", () => {
+  it("fills a code field, keeping focus there for Enter", () => {
+    page(`<form><input id="code" autocomplete="one-time-code"><button>Verify</button></form>`);
+    const field = document.querySelector("#code") as HTMLInputElement;
+    const submitted = vi.fn((e: Event) => e.preventDefault());
+    field.form?.addEventListener("submit", submitted);
+    expect(fillOneTimeCode(origin, "123456", field)).toBe("filled");
+    expect(field.value).toBe("123456");
+    expect(document.activeElement).toBe(field);
+    expect(submitted).not.toHaveBeenCalled();
+  });
+
+  it("spreads a code over one box per digit, in order", () => {
+    const boxes = Array.from({ length: 6 }, (_, i) => `<input id="b${i}" maxlength="1" inputmode="numeric">`).join("");
+    page(`<form><div>${boxes}</div></form>`);
+    const typed: string[] = [];
+    document.addEventListener("keydown", (e) => typed.push(`${(e.target as HTMLElement).id}:${e.key}`));
+    expect(fillOneTimeCode(origin, "908172", document.querySelector("#b3") as HTMLInputElement)).toBe("filled");
+    expect([0, 1, 2, 3, 4, 5].map((i) => value(`#b${i}`)).join("")).toBe("908172");
+    expect(typed).toEqual(["b0:9", "b1:0", "b2:8", "b3:1", "b4:7", "b5:2"]);
+    expect(document.activeElement?.id).toBe("b5");
+  });
+
+  it("types the code when the page undoes a set value", () => {
+    page(`<form><input id="code" autocomplete="one-time-code"></form>`);
+    const field = document.querySelector("#code") as HTMLInputElement;
+    // a controlled input: it only accepts what arrives through typed input events
+    let state = "";
+    field.addEventListener("input", (e) => {
+      const data = (e as InputEvent).data;
+      state = data ? state + data : state;
+      field.value = state;
+    });
+    expect(fillOneTimeCode(origin, "424242", field)).toBe("filled");
+    expect(field.value).toBe("424242");
+  });
+
+  it("respects a page that blocks keys it doesn't want", () => {
+    page(`<form><input id="code" autocomplete="one-time-code"></form>`);
+    const field = document.querySelector("#code") as HTMLInputElement;
+    field.addEventListener("input", () => {
+      field.value = field.value.replace(/\D/g, "");
+    });
+    expect(fillOneTimeCode(origin, "12ab34", field)).toBe("filled");
+    expect(field.value).toBe("1234");
+  });
+
+  it("refuses another origin, a field that isn't for codes, or one that's gone", () => {
+    page(`<form><input id="code" autocomplete="one-time-code"><input id="name" name="name"></form>`);
+    const code = document.querySelector("#code") as HTMLInputElement;
+    expect(fillOneTimeCode("https://evil.example", "123456", code)).toBe("origin-mismatch");
+    expect(fillOneTimeCode(origin, "123456", document.querySelector("#name") as HTMLInputElement)).toBe("no-fields");
+    code.remove();
+    expect(fillOneTimeCode(origin, "123456", code)).toBe("no-fields");
+  });
+
+  it("never puts a code into a hidden decoy", () => {
+    page(`<form><input id="code" autocomplete="one-time-code" data-hidden></form>`);
+    expect(fillOneTimeCode(origin, "123456", document.querySelector("#code") as HTMLInputElement)).toBe("no-fields");
   });
 });

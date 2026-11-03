@@ -18,6 +18,7 @@ import {
   type MenuMessage,
   type NewPasswordContext,
   type NewPasswordResult,
+  type OneTimeCodesResult,
   type Request,
   type Settings,
   type SignInState,
@@ -25,6 +26,7 @@ import {
 } from "@/src/messages.ts";
 import { PortTransport } from "@/src/native/port-transport.ts";
 import { generatePassword } from "@/src/passwords/generate.ts";
+import { oneTimeCodeId, oneTimeCodeViews } from "@/src/passwords/one-time-codes.ts";
 import { waitForLogin } from "@/src/passwords/wait-for-login.ts";
 import { Session } from "@/src/session/session.ts";
 import { toolbarAction } from "@/src/toolbar.ts";
@@ -99,6 +101,19 @@ export default defineBackground(() => {
     unlocked = state === "unlocked";
     const message: MenuMessage = { type: "session-changed", unlocked };
     void browser.runtime.sendMessage(message).catch(() => {});
+  });
+
+  // A new verification code (one that just arrived by SMS, say): open menus and the popup list again
+  const announcing = new WeakSet<object>();
+  session.onChange(async ({ state }) => {
+    if (state !== "unlocked") return;
+    const client = await session.unlockedClient().catch(() => undefined);
+    if (!client || announcing.has(client)) return;
+    announcing.add(client);
+    client.onOneTimeCodeAvailable(() => {
+      const message: MenuMessage = { type: "one-time-codes-changed" };
+      void browser.runtime.sendMessage(message).catch(() => {});
+    });
   });
 
   // Remembered while this browser can't reach Apple's helper, so the first connection after setup
@@ -267,7 +282,13 @@ export default defineBackground(() => {
     const settings = await getSettings();
     if (!url) return { show: "none" };
     // "when signing in" covers login fields, "when signing up" new-password and email fields
-    if (kind === "login" ? !settings.inlineMenu : !settings.generatePasswords) return { show: "none" };
+    const enabled =
+      kind === "login"
+        ? settings.inlineMenu
+        : kind === "one-time-code"
+          ? settings.oneTimeCodes
+          : settings.generatePasswords;
+    if (!enabled) return { show: "none" };
     if (kind === "email") {
       // Hide My Email works without Apple Passwords, so no unlocking is needed
       const offered =
@@ -289,6 +310,11 @@ export default defineBackground(() => {
     }
     // saving needs the session, so new passwords are offered only once unlocked
     if (kind === "new-password") return { show: "generate" };
+    // many code fields want a code sent by SMS or email: offer only codes Apple Passwords has
+    if (kind === "one-time-code") {
+      const codes = await oneTimeCodesFor(caller.tabId).catch(() => undefined);
+      return { show: codes && codes.codes.length > 0 ? "codes" : "none" };
+    }
     // shown even without saved logins: the menu then says so, every time, not only after unlocking
     return { show: "logins" };
   }
@@ -320,6 +346,16 @@ export default defineBackground(() => {
     return usernames.length === 1 ? usernames[0] : undefined;
   }
 
+  // The account just signed in with, by tab: a sign-in's verification step lists its code first.
+  // Only the username is kept, briefly, like a chosen login.
+  const signedIn = new Map<number, { hostname: string; username: string; at: number }>();
+
+  function signedInAs(tabId: number, hostname: string): string | undefined {
+    const entry = signedIn.get(tabId);
+    if (!entry || entry.hostname !== hostname || Date.now() - entry.at >= CHOSEN_LOGIN_MS) return undefined;
+    return entry.username;
+  }
+
   // Logins sent with a form, by tab, until the page moves on (see saveSentLogin)
   const sentLogins = new Map<number, SentLogin>();
 
@@ -328,12 +364,14 @@ export default defineBackground(() => {
     if (state === "unlocked") return;
     sentLogins.clear();
     chosenLogins.clear();
+    signedIn.clear();
     unconfirmed.length = 0;
     generatedByTab.clear();
     generatedForMenu.clear();
   });
   browser.tabs.onRemoved.addListener((tabId) => {
     sentLogins.delete(tabId);
+    signedIn.delete(tabId);
     generatedByTab.delete(tabId);
     menuNonces.delete(tabId);
     for (const key of generatedForMenu.keys()) if (key.startsWith(`${tabId}:`)) generatedForMenu.delete(key);
@@ -463,7 +501,10 @@ export default defineBackground(() => {
       if (sentLogins.get(caller.tabId) === login) sentLogins.delete(caller.tabId);
     };
     // not worth it: forget the password right away; else once the page has had time to move on
-    void login.saveAs.then((account) => account ?? drop());
+    void login.saveAs.then((account) => {
+      if (account) signedIn.set(caller.tabId, { hostname: login.hostname, username: account, at: Date.now() });
+      return account ?? drop();
+    });
     setTimeout(drop, SENT_LOGIN_MS);
   }
 
@@ -706,6 +747,37 @@ export default defineBackground(() => {
         });
         return { result };
       }
+      case "list-one-time-codes":
+        return oneTimeCodesFor(tabOf(caller, request.tabId));
+      case "fill-one-time-code": {
+        const tabId = tabOf(caller, request.tabId);
+        const { origin, code } = await oneTimeCodeDigits(tabId, request.id);
+        const reply = (await relay(tabId, { type: "fill-one-time-code", origin, code })) as
+          | { result: string }
+          | undefined;
+        return { result: reply?.result ?? "no-fields" };
+      }
+      case "copy-one-time-code": {
+        // the popup only: the inline menu lives inside the page, which needn't see the code
+        if (caller.tabId !== undefined) throw new Error("not allowed");
+        return { code: (await oneTimeCodeDigits(request.tabId, request.id)).code };
+      }
+      case "fill-one-time-code-from-menu": {
+        const tabId = tabOf(caller);
+        // a hidden or covered menu was never really chosen from: no Touch ID for it
+        const visible = (await relay(tabId, { type: "menu-visible", nonce: request.nonce }).catch(
+          () => false,
+        )) as boolean;
+        if (!visible) return { result: "menu-hidden" };
+        const { origin, code } = await oneTimeCodeDigits(tabId, request.id);
+        const reply = (await relay(tabId, {
+          type: "menu-fill-one-time-code",
+          nonce: request.nonce,
+          origin,
+          code,
+        })) as { result: string } | undefined;
+        return { result: reply?.result ?? "menu-hidden" };
+      }
       case "generate-passwords": {
         const tabId = tabOf(caller);
         const context = await newPasswordContext(tabId, request.nonce);
@@ -858,9 +930,43 @@ export default defineBackground(() => {
     // the tab may have moved on meanwhile: the password is for the site it's on now, and only fills there
     const { url: now, credential } = await credentialFor(tabId, username);
     const filled = await fill(now.origin, credential.password);
-    // signed in: no reset to save for
-    if (filled === "filled") chosenLogins.delete(now.hostname);
+    // signed in: no reset to save for, but maybe a verification code to fill next
+    if (filled === "filled") {
+      chosenLogins.delete(now.hostname);
+      signedIn.set(tabId, { hostname: now.hostname, username, at: Date.now() });
+    }
     return filled;
+  }
+
+  /** The tab's verification codes, without digits. The page's URL is all the helper is told. */
+  async function oneTimeCodesFor(tabId: number): Promise<OneTimeCodesResult> {
+    const url = await tabUrl(tabId);
+    if (!url) return { codes: [] };
+    const client = await session.unlockedClient();
+    // asked for a stand-in tab, like logins: an unasked update for the real one can't pass for the answer
+    const { codes } = await client.getOneTimeCodes([url.href], PROBE_TAB);
+    const current = signedInAs(tabId, url.hostname);
+    return {
+      hostname: url.hostname,
+      codes: oneTimeCodeViews(codes, current),
+      ...(current ? { signedInAs: current } : {}),
+    };
+  }
+
+  /**
+   * The digits of the tab's code `id`, current now: macOS asks for Touch ID first, so there's no
+   * timeout. Returned with the origin they're for, which a fill must still be on.
+   */
+  async function oneTimeCodeDigits(tabId: number, id: string): Promise<{ origin: string; code: string }> {
+    const url = await tabUrl(tabId);
+    if (!url) throw new Error("this page can't be filled");
+    const client = await session.unlockedClient();
+    const { codes } = await client.getOneTimeCodes([url.href], PROBE_TAB);
+    const chosen = codes.find((code) => oneTimeCodeId(code) === id);
+    if (!chosen) throw new Error("that verification code is no longer saved");
+    const code = await client.currentOneTimeCode(chosen, [url.href], { tabId });
+    if (!code) throw new Error("Apple Passwords didn't give the code");
+    return { origin: url.origin, code };
   }
 
   async function credentialFor(tabId: number, username: string) {

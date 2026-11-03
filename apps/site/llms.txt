@@ -10,6 +10,8 @@ How it differs from Apple's iCloud Passwords extension:
 - Offers Hide My Email addresses (iCloud+) and the emails from your contact card in sign-up forms.
 - Mac only (macOS 14 or later). Apple's extension also runs on Windows with iCloud for Windows.
 
+Like Apple's extension, it fills two-factor verification codes saved in Apple Passwords, after Touch ID.
+
 Privacy: passwords stay in Apple Passwords on the Mac. The extension asks the password helper built into macOS for the login the user picks, over Apple's own encrypted pairing, fills it, and stores nothing. There are no accounts, no servers and no analytics. Hide My Email talks to the user's iCloud account, and only once it is turned on.
 
 ## Links
