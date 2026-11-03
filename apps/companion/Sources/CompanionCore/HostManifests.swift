@@ -67,6 +67,7 @@ public enum HostManifests {
         Browser(name: "Crest", dataDirectory: "Crest/Chromium", kind: .chromium),
         Browser(
             name: "Ardia", dataDirectory: "com.ardia.browser/Chromium", kind: .chromium, bundleID: "com.ardia.browser"),
+        Browser(name: "Yab", dataDirectory: "Yab/Chromium", kind: .chromium, bundleID: "dev.serafim.fast"),
         Browser(name: "Firefox", dataDirectory: "Firefox", kind: .firefox, bundleID: "org.mozilla.firefox"),
         Browser(name: "Zen", dataDirectory: "zen", kind: .firefox, bundleID: "app.zen-browser.zen"),
     ]
