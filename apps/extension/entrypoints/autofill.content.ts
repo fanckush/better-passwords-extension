@@ -1,4 +1,11 @@
-import { type FieldKind, fieldKind, isOneTimeCodeField, oneTimeCodeGroup } from "@/src/autofill/fields.ts";
+import {
+  type FieldKind,
+  fieldKind,
+  isOneTimeCodeField,
+  isUnsurePasswordField,
+  mayTakeNewPassword,
+  oneTimeCodeGroup,
+} from "@/src/autofill/fields.ts";
 import { MenuHost } from "@/src/autofill/menu-host.ts";
 import {
   isGone,
@@ -59,15 +66,17 @@ export default defineContentScript({
       // like Safari: a code is offered while the field is empty, not over one being typed
       if (kind === "one-time-code" && oneTimeCodeGroup(field).some((box) => box.value !== "")) return;
       const ticket = ++request;
-      const { show, nonce } = await send({ type: "autofill-status", kind }).catch(() => ({
+      const unsure = kind === "login" && isUnsurePasswordField(field);
+      const { show, nonce, orGenerate } = await send({ type: "autofill-status", kind, unsure }).catch(() => ({
         show: "none" as const,
         nonce: undefined,
+        orGenerate: undefined,
       }));
       // the user may have moved on while we asked
       if (ticket !== request || document.activeElement !== field) return;
       if (nonce === undefined) {
         menu.close();
-      } else if (kind === "new-password" && field.value !== "") {
+      } else if ((kind === "new-password" || (unsure && field === generated?.field)) && field.value !== "") {
         // our own password: say it's saved; one the user typed: stay out of the way
         if (show !== "none" && generated?.field.form === field.form && field.value === generated.value) {
           menu.open(field, generated.saved ? "generated" : "generated-unsaved", kind, nonce);
@@ -81,7 +90,7 @@ export default defineContentScript({
       } else if (show === "logins" || show === "generate" || show === "locked" || show === "setup") {
         // "locked" and "setup" too: login fields include guessed usernames, but only next to a
         // password field, and the email field is usually the first one people click
-        menu.open(field, show, kind, nonce);
+        menu.open(field, show, kind, nonce, orGenerate);
       } else {
         menu.close();
       }
@@ -339,7 +348,7 @@ export default defineContentScript({
           return false;
         case "menu-new-password-context": {
           const field = menu.anchor;
-          if (!field || fieldKind(field) !== "new-password") {
+          if (!field || !mayTakeNewPassword(field)) {
             sendResponse(undefined);
             return false;
           }

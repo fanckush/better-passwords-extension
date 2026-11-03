@@ -15,6 +15,12 @@ const ACCOUNT_NAME = /^(user([_-]?(name|id))?|login([_-]?(name|id))?|identifier|
 const EMAIL_HINT = /e-?mail/i;
 const SIGNUP_HINT = /sign[\s_-]?up|regist|create[\s_-]?(an[\s_-]?)?account|join|enrol/i;
 const LOGIN_HINT = /sign[\s_-]?in|log[\s_-]?in/i;
+/** A sign-in's password is never optional. */
+const OPTIONAL_HINT = /optional|facultati|opcional|opzionale/i;
+/** A field for the person's name, which only a sign-up asks for. Not "username". */
+const PERSON_NAME = /(full|first|last|given|family|sur|fore)[\s_-]?name|vorname|nachname|pr[ée]nom/i;
+/** A link to reset a forgotten password: the page signs in. */
+const PASSWORD_RESET = /forg[eo]t|reset|vergessen|oubli|olvid/i;
 
 function textOf(el: HTMLInputElement): string {
   // the label too: some fields say what they are nowhere else (no name, a generated id)
@@ -138,6 +144,26 @@ function looksLikeLogin(form: HTMLFormElement | null): boolean {
   return LOGIN_HINT.test(`${ownText(form)} ${buttonText(form)}`);
 }
 
+/**
+ * The fields filled along with `el`: its form, or for fields outside any form the nearest element
+ * around it holding another field (not the whole page: a profile's name fields are no sign-up).
+ */
+function fieldsAround(el: HTMLInputElement): HTMLInputElement[] {
+  if (el.form) return Array.from(el.form.querySelectorAll("input"));
+  for (let scope = el.parentElement; scope && scope !== el.ownerDocument.body; scope = scope.parentElement) {
+    const inputs = Array.from(scope.querySelectorAll("input")).filter((input) => input.type !== "hidden");
+    if (inputs.length > 1) return inputs;
+  }
+  return [el];
+}
+
+/** A field for the person's name: marked as one, or named or labelled for one. */
+function isPersonNameField(el: HTMLInputElement): boolean {
+  if (!isTextLike(el)) return false;
+  if (tokens(el).some((token) => ["name", "given-name", "family-name"].includes(token))) return true;
+  return /^(full[_-]?)?name$/i.test(el.name) || PERSON_NAME.test(textOf(el));
+}
+
 /** A password field that should get a new password: sign-up, confirmation or change-password. */
 export function isNewPasswordField(el: HTMLInputElement): boolean {
   if (el.type !== "password") return false;
@@ -150,11 +176,35 @@ export function isNewPasswordField(el: HTMLInputElement): boolean {
   // two password fields: password and confirmation; three: current, new and confirmation
   if (all.length === 2 && !marked) return true;
   if (all.length >= 3) return all.indexOf(el) > 0;
+  // a sign-up's too: an optional password, or one asked for along with the person's name
+  if (OPTIONAL_HINT.test(textOf(el)) || fieldsAround(el).some(isPersonNameField)) return true;
   return looksLikeSignup(el.form);
 }
 
 export function isPasswordField(el: HTMLInputElement): boolean {
   return el.type === "password" && !isNewPasswordField(el);
+}
+
+/** The page links to resetting a forgotten password, as sign-in pages do. */
+function offersPasswordReset(doc: Document): boolean {
+  return Array.from(doc.querySelectorAll<HTMLElement>("a, button")).some((el) =>
+    PASSWORD_RESET.test(el.textContent ?? ""),
+  );
+}
+
+/**
+ * A sign-in's password field, as far as anyone can tell, but nothing says it's one: no
+ * `current-password`, no sign-in button, no forgotten-password link. Could be a sign-up's, so
+ * with no saved logins for the site a strong password is suggested instead.
+ */
+export function isUnsurePasswordField(el: HTMLInputElement): boolean {
+  if (!isPasswordField(el) || tokens(el).includes("current-password")) return false;
+  return !looksLikeLogin(el.form) && !offersPasswordReset(el.ownerDocument);
+}
+
+/** A password field a new password may go into: a sign-up's, or one that might be. */
+export function mayTakeNewPassword(el: HTMLInputElement): boolean {
+  return isNewPasswordField(el) || isUnsurePasswordField(el);
 }
 
 function inSignupForm(el: HTMLInputElement): boolean {

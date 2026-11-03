@@ -24,6 +24,8 @@ bindToMenu(nonce);
 const kind = params.get("kind") ?? "login";
 /** Whether the menu is on a password field, rather than a username one. */
 const onPasswordField = params.get("field") === "password";
+/** A password field that may be a sign-up's: with no saved logins, suggest a strong password. */
+const orGenerate = params.get("orGenerate") === "1";
 const mode = params.get("mode");
 const panel = document.getElementById("menu") as HTMLElement;
 
@@ -131,6 +133,7 @@ async function showLogins(error?: string) {
   }
   if (result.logins.length === 0) {
     loginsView = undefined;
+    if (orGenerate) return showGenerate();
     return render(message(`No saved passwords for ${result.hostname ?? "this site"}.`), openPasswordsRow(true));
   }
   loginsView = {

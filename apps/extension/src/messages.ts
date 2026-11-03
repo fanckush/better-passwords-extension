@@ -64,7 +64,8 @@ export type Request =
   /** Opens Apple's Passwords app, searching for the tab's site when there is one. */
   | { type: "open-passwords-app"; tabId?: number }
   // content script → background (the only requests content scripts may send)
-  | { type: "autofill-status"; kind: FieldKind }
+  /** `unsure`: a password field that may be a sign-up's (see isUnsurePasswordField). */
+  | { type: "autofill-status"; kind: FieldKind; unsure?: boolean }
   /** The username next to a password we generated (as it's typed). */
   | { type: "generated-username"; username: string }
   /** The field holding a password we generated went away (a dialog closed, a step moved on). */
@@ -168,6 +169,8 @@ export interface AutofillStatus {
   show: "logins" | "generate" | "email" | "codes" | "locked" | "setup" | "none";
   /** For a menu to show: its nonce, which the background accepts from this tab's menu only. */
   nonce?: string;
+  /** A field that may be a sign-up's: with no saved logins, suggest a strong password instead. */
+  orGenerate?: boolean;
 }
 
 export interface GeneratedPasswords {

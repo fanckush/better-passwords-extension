@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fieldKind, isLoginField, oneTimeCodeGroup } from "../src/autofill/fields.ts";
+import { fieldKind, isLoginField, isUnsurePasswordField, oneTimeCodeGroup } from "../src/autofill/fields.ts";
 
 function field(html: string, selector = "#f"): HTMLInputElement {
   document.body.innerHTML = html;
@@ -76,6 +76,49 @@ describe("fieldKind", () => {
       "new-password",
     ],
     ["login form", `<form><input type="email"><input id="f" type="password"><button>Sign in</button></form>`, "login"],
+    [
+      // Crunchbase's last sign-up step
+      "optional password next to a full name",
+      `<form><label for="n">Full name*</label><input id="n" required>
+       <label for="f">Password (Optional)</label><input id="f" type="password"><button>Continue</button></form>`,
+      "new-password",
+    ],
+    [
+      "optional password",
+      `<form><input id="f" type="password" placeholder="Password (optional)"></form>`,
+      "new-password",
+    ],
+    [
+      "password asked for with a name, outside any form",
+      `<div><div><input autocomplete="given-name"></div><div><input id="f" type="password"></div></div>`,
+      "new-password",
+    ],
+    [
+      "password next to a field named name",
+      `<form><input name="name"><input id="f" type="password"><button>Next</button></form>`,
+      "new-password",
+    ],
+    [
+      "sign-up email next to a name",
+      `<form><input autocomplete="name"><input id="f" type="email"><input type="password"></form>`,
+      "email",
+    ],
+    [
+      "password next to a username",
+      `<form><input name="username"><input id="f" type="password"><button>Continue</button></form>`,
+      "login",
+    ],
+    [
+      // a profile page's name fields aren't the sign-in's
+      "password away from a name, outside any form",
+      `<div><input autocomplete="given-name"></div><div><input type="email"><input id="f" type="password"></div>`,
+      "login",
+    ],
+    [
+      "change password: current, on a form with a name",
+      `<form><input autocomplete="name"><input id="f" type="password"><input type="password"><input type="password"></form>`,
+      "login",
+    ],
     [
       "sign-up email",
       `<form><input id="f" type="email"><input type="password" autocomplete="new-password"></form>`,
@@ -202,5 +245,31 @@ describe("verification code fields", () => {
     expect(isLoginField(field(`<form><input id="f" autocomplete="one-time-code"><input type="password"></form>`))).toBe(
       false,
     );
+  });
+});
+
+describe("isUnsurePasswordField", () => {
+  it.each([
+    [
+      "password with a plain button",
+      `<form><input type="email"><input id="f" type="password"><button>Continue</button></form>`,
+    ],
+    ["lone password", `<input id="f" type="password">`],
+  ])("is unsure of a %s", (_, html) => {
+    expect(isUnsurePasswordField(field(html))).toBe(true);
+  });
+
+  it.each([
+    ["current-password", `<form><input id="f" type="password" autocomplete="current-password"></form>`],
+    ["sign-in form", `<form><input type="email"><input id="f" type="password"><button>Log in</button></form>`],
+    [
+      "page with a forgotten-password link",
+      `<form><input type="email"><input id="f" type="password"><button>Continue</button></form>
+       <a href="/reset">Forgot your password?</a>`,
+    ],
+    ["new password", `<form><input id="f" type="password" autocomplete="new-password"></form>`],
+    ["text field", `<form><input id="f" type="email"><input type="password"></form>`],
+  ])("is sure of a %s", (_, html) => {
+    expect(isUnsurePasswordField(field(html))).toBe(false);
   });
 });

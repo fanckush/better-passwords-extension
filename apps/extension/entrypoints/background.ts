@@ -272,9 +272,15 @@ export default defineBackground(() => {
     return typeof nonce === "string" && (menuNonces.get(tabId)?.includes(nonce) ?? false);
   }
 
-  async function autofillStatus(caller: Caller & { kind: "content-script" }, kind: FieldKind): Promise<AutofillStatus> {
+  async function autofillStatus(
+    caller: Caller & { kind: "content-script" },
+    kind: FieldKind,
+    unsure = false,
+  ): Promise<AutofillStatus> {
     const { show } = await menuToShow(caller, kind);
-    return show === "none" ? { show } : { show, nonce: issueMenuNonce(caller.tabId) };
+    if (show === "none") return { show };
+    const orGenerate = kind === "login" && unsure && (await getSettings()).generatePasswords;
+    return { show, nonce: issueMenuNonce(caller.tabId), ...(orGenerate ? { orGenerate } : {}) };
   }
 
   async function menuToShow(caller: Caller & { kind: "content-script" }, kind: FieldKind): Promise<AutofillStatus> {
@@ -661,7 +667,7 @@ export default defineBackground(() => {
 
   async function handle(request: Request, caller: Caller): Promise<unknown> {
     if (caller.kind === "content-script") {
-      if (request.type === "autofill-status") return autofillStatus(caller, request.kind);
+      if (request.type === "autofill-status") return autofillStatus(caller, request.kind, request.unsure);
       if (request.type === "generated-username") {
         trackUsername(caller, request.username);
         return null;

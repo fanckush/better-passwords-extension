@@ -122,8 +122,11 @@ export class MenuHost {
     return this.isOpen && this.#rendered && !this.#empty;
   }
 
-  /** `nonce` comes from the background, which accepts requests from this menu only with it. */
-  open(anchor: HTMLInputElement, mode: MenuMode, kind: FieldKind, nonce: string): void {
+  /**
+   * `nonce` comes from the background, which accepts requests from this menu only with it.
+   * `orGenerate`: with no saved logins, suggest a strong password instead (a field that may be a sign-up's).
+   */
+  open(anchor: HTMLInputElement, mode: MenuMode, kind: FieldKind, nonce: string, orGenerate = false): void {
     this.#anchor = anchor;
     this.#nonce = nonce;
     this.#height = 48;
@@ -137,7 +140,9 @@ export class MenuHost {
     // The nonce ties requests to this menu; a copy of menu.html framed by the page itself has none.
     // "password": the menu is on a password field, e.g. the step after the username in a multi-step sign-in
     const field = anchor.type === "password" ? "password" : "username";
-    this.#frame = createFrame(`${this.menuUrl}#${new URLSearchParams({ nonce: this.#nonce, mode, kind, field })}`);
+    const params = new URLSearchParams({ nonce: this.#nonce, mode, kind, field });
+    if (orGenerate) params.set("orGenerate", "1");
+    this.#frame = createFrame(`${this.menuUrl}#${params}`);
     this.#shadow.replaceChildren(this.#frame);
     if (!this.#host.isConnected) document.documentElement.append(this.#host);
     // re-entering the top layer puts us above anything the page opened before

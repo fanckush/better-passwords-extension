@@ -1,4 +1,4 @@
-import { isNewPasswordField, isOneTimeCodeField, oneTimeCodeGroup } from "./autofill/fields.ts";
+import { isNewPasswordField, isOneTimeCodeField, mayTakeNewPassword, oneTimeCodeGroup } from "./autofill/fields.ts";
 
 // fillCredentials runs inside the page: injected by scripting.executeScript (popup) or called by the
 // autofill content script (inline menu), so it must not reference anything outside its own body.
@@ -80,7 +80,7 @@ export function fillCredentials(
  */
 export function fillNewPassword(expectedOrigin: string, password: string, anchor: HTMLInputElement): FillResult {
   if (window.location.origin !== expectedOrigin) return "origin-mismatch";
-  if (!anchor.isConnected || !isNewPasswordField(anchor)) return "no-fields";
+  if (!anchor.isConnected || !mayTakeNewPassword(anchor)) return "no-fields";
   const scope = anchor.form ?? document;
   const targets = Array.from(scope.querySelectorAll("input")).filter(
     (el) => el === anchor || (isNewPasswordField(el) && isFillable(el)),
