@@ -91,9 +91,92 @@ describe("Session", () => {
     await expect(missing.connect()).rejects.toThrow();
     expect(missing.status.state).toBe("no-helper");
 
-    const crashed = failing("Native host has exited.");
-    await expect(crashed.connect()).rejects.toThrow();
-    expect(crashed.status).toEqual({ state: "disconnected", error: "Native host has exited." });
+    const firefoxMissing = failing("No such native application io.github.fanckush.betterpasswords.bridge");
+    await expect(firefoxMissing.connect()).rejects.toThrow();
+    expect(firefoxMissing.status.state).toBe("no-helper");
+
+    // other failures aren't macOS blocking the helper
+    const garbled = failing("Error when communicating with the native messaging host.");
+    await expect(garbled.connect()).rejects.toThrow();
+    expect(garbled.status.state).toBe("disconnected");
+  });
+
+  it("calls the helper blocked once it quits before answering twice in a row", async () => {
+    // macOS kills the helper at launch when the browser isn't one Apple allows
+    let launches = 0;
+    const killed = new Session({
+      openTransport: () => {
+        launches++;
+        const transport = new MemoryTransport(new FakeHelper());
+        transport.send = () => transport.kill("Native host has exited.");
+        return transport;
+      },
+    });
+    await expect(killed.connect()).rejects.toThrow();
+    expect(killed.status).toEqual({ state: "blocked", error: "Native host has exited." });
+    expect(launches).toBe(2);
+
+    // Firefox may give no reason at all
+    const silent = new Session({
+      openTransport: () => {
+        let closed: (error?: string) => void = () => {};
+        return {
+          send: () => closed(),
+          onMessage: () => {},
+          onClose: (listener) => {
+            closed = listener;
+          },
+          close: () => {},
+        };
+      },
+    });
+    await expect(silent.connect()).rejects.toThrow();
+    expect(silent.status.state).toBe("blocked");
+  });
+
+  it("takes a helper that crashed once and then answers as working", async () => {
+    const helper = new FakeHelper({ vault });
+    let launches = 0;
+    const session = new Session({
+      openTransport: () => {
+        const transport = new MemoryTransport(helper);
+        if (launches++ === 0) transport.send = () => transport.kill("Native host has exited.");
+        return transport;
+      },
+    });
+    await session.connect();
+    expect(session.status.state).toBe("locked");
+    expect(launches).toBe(2);
+  });
+
+  it("stays blocked as an earlier worker found, and launches the helper only when asked", async () => {
+    const helper = new FakeHelper({ vault });
+    const transports: MemoryTransport[] = [];
+    const session = new Session({
+      openTransport: () => {
+        const transport = new MemoryTransport(helper);
+        transports.push(transport);
+        return transport;
+      },
+      blockedEarlier: async () => "Native host has exited.",
+    });
+    await expect(session.connect()).rejects.toMatchObject({ code: "blocked" });
+    await expect(session.requestCode()).rejects.toMatchObject({ code: "blocked" });
+    expect(session.status).toEqual({ state: "blocked", error: "Native host has exited.", remembered: true });
+    expect(transports).toHaveLength(0);
+
+    await session.connect({ retry: true });
+    expect(transports).toHaveLength(1);
+    expect(session.status.state).toBe("locked");
+  });
+
+  it("starts normally when no earlier worker found it blocked", async () => {
+    const session = new Session({
+      openTransport: () => new MemoryTransport(new FakeHelper({ vault })),
+      blockedEarlier: async () => undefined,
+    });
+    await session.connect();
+    expect(session.status.state).toBe("locked");
   });
 
   it("reports a wrong code, and shows a new one when asked", async () => {

@@ -35,8 +35,9 @@ async function refresh(error?: string) {
     return showRetry(messageOf(e));
   }
 
-  // not set up yet, or set up moments ago (the popup closes while the user does it)
-  if (status.state === "no-helper" || status.justConnected) return showSetup(status);
+  // not set up yet, set up moments ago (the popup closes while the user does it), or set up in a
+  // browser macOS doesn't let start Apple's helper (the setup flow explains)
+  if (status.state === "no-helper" || status.state === "blocked" || status.justConnected) return showSetup(status);
 
   if (status.state === "unlocked") return showLogins(status, error);
   // locked or disconnected: start unlocking right away, saving the user a click

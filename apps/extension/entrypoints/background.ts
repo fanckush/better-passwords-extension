@@ -27,6 +27,7 @@ import { PortTransport } from "@/src/native/port-transport.ts";
 import { generatePassword } from "@/src/passwords/generate.ts";
 import { waitForLogin } from "@/src/passwords/wait-for-login.ts";
 import { Session } from "@/src/session/session.ts";
+import { toolbarAction } from "@/src/toolbar.ts";
 import { PendingUpdate } from "@/src/updates.ts";
 import { fillableUrl } from "@/src/url-policy.ts";
 
@@ -68,10 +69,19 @@ interface SentLogin {
 const SENT_LOGIN_MS = 60_000;
 
 export default defineBackground(() => {
+  // macOS kills Apple's helper in browsers Apple doesn't allow, and every try leaves a crash report
+  // on the Mac. So a blocked browser tries once per launch, plus whenever the user asks (the session
+  // refuses otherwise). Workers restart often, so it's remembered for the browser session.
+  const HELPER_BLOCKED = "helperBlocked";
   const session = new Session({
     openTransport: () => new PortTransport(BRIDGE_HOST),
     browserName: import.meta.env.FIREFOX ? "Firefox" : "Chrome",
+    blockedEarlier: async () => {
+      const stored = (await browser.storage.session.get(HELPER_BLOCKED))[HELPER_BLOCKED];
+      return typeof stored === "string" ? stored : undefined;
+    },
   });
+  const companion = new Companion();
 
   // An open native port keeps the worker alive in Chrome 105+; the alarm is a fallback that
   // wakes it if the browser suspends it anyway. Nothing to do on wake: state lives in memory.
@@ -99,6 +109,37 @@ export default defineBackground(() => {
     else if (state === "unlocked") void browser.storage.local.remove(SETUP_PENDING);
   });
 
+  // Told the Mac app this browser is blocked, so it hears once it isn't any more.
+  const REPORTED_BLOCKED = "reportedBlocked";
+  const action = toolbarAction();
+  let blocked = false;
+  session.onChange(({ state, error, remembered }) => {
+    if (state === "blocked") {
+      blocked = true;
+      void browser.storage.session.set({ [HELPER_BLOCKED]: error ?? "" }).catch(() => {});
+      void action?.setBadgeText({ text: "!" });
+      void action?.setBadgeBackgroundColor({ color: "#e8a33d" });
+      // a worker that restored it has nothing new to tell
+      if (remembered) return;
+      void companion.reportHelper(true);
+      void browser.storage.local.set({ [REPORTED_BLOCKED]: true });
+      return;
+    }
+    // anything else, even a retry that timed out, isn't macOS blocking the helper
+    if (blocked) {
+      blocked = false;
+      void browser.storage.session.remove(HELPER_BLOCKED).catch(() => {});
+      void action?.setBadgeText({ text: "" });
+    }
+    // only the helper answering shows it isn't blocked any more
+    if (state !== "locked" && state !== "awaiting-code" && state !== "unlocked") return;
+    void browser.storage.local.get(REPORTED_BLOCKED).then(async (stored) => {
+      if (stored[REPORTED_BLOCKED] !== true) return;
+      await companion.reportHelper(false);
+      await browser.storage.local.remove(REPORTED_BLOCKED);
+    });
+  });
+
   /** Apple Passwords and its helper exist only on macOS; elsewhere there's nothing to set up. */
   const onMac = browser.runtime
     .getPlatformInfo()
@@ -106,11 +147,12 @@ export default defineBackground(() => {
     .catch(() => true);
 
   // A fresh install that can't reach the helper yet opens the setup page, so nobody has to find
-  // the toolbar button first. A Mac that is set up already (a reinstall) sees nothing.
+  // the toolbar button first; so does one in a browser macOS blocks, which explains it. A Mac that
+  // is set up already (a reinstall) sees nothing.
   browser.runtime.onInstalled.addListener(async ({ reason }) => {
     if (reason !== "install" || !(await onMac)) return;
     await session.connect().catch(() => {});
-    if (session.status.state === "no-helper") await openSetupPage();
+    if (session.status.state === "no-helper" || session.status.state === "blocked") await openSetupPage();
   });
 
   function openSetupPage() {
@@ -161,13 +203,12 @@ export default defineBackground(() => {
     });
   }
 
-  const companion = new Companion();
   const status = (): Status => ({ ...session.status });
 
   /** Status plus whether the companion app can unlock with Touch ID. */
   async function fullStatus(): Promise<Status> {
     const base = status();
-    if (base.state === "no-helper") return base;
+    if (base.state === "no-helper" || base.state === "blocked") return base;
     const state = await companion.state();
     const update = await companion.update();
     const connected = base.state === "locked" || base.state === "awaiting-code";
@@ -236,11 +277,13 @@ export default defineBackground(() => {
         (await companion.state()) !== "not-installed";
       return { show: offered ? "email" : "none" };
     }
-    // "no-helper" too: the user may have just run the setup
+    // "no-helper" too: the user may have just run the setup. Never "blocked": see HELPER_BLOCKED
     if (["disconnected", "closed", "no-helper"].includes(session.status.state)) {
       await session.connect().catch(() => {});
     }
     if (!session.isUnlocked) {
+      // an unlock button that can't work helps nobody; the toolbar badge and popup explain it
+      if (session.status.state === "blocked") return { show: "none" };
       if (session.status.state !== "no-helper") return { show: "locked" };
       return { show: (await onMac) ? "setup" : "none" };
     }
@@ -603,7 +646,8 @@ export default defineBackground(() => {
     }
     switch (request.type) {
       case "get-status":
-        // retrying "no-helper" is how the popup and setup page notice that setup just finished
+        // retrying "no-helper" is how the popup and setup page notice that setup just finished;
+        // "blocked" waits for the user to ask (retry-connection)
         if (session.status.state === "disconnected" || session.status.state === "no-helper") {
           await session.connect().catch(() => {});
         }
@@ -772,6 +816,9 @@ export default defineBackground(() => {
       case "open-companion-app":
         await companion.openApp();
         return null;
+      case "retry-connection":
+        await session.connect({ retry: true }).catch(() => {});
+        return fullStatus();
       case "open-companion-page":
         // our own page about the app, which links to its download
         await browser.tabs.create({ url: browser.runtime.getURL("/companion.html") });

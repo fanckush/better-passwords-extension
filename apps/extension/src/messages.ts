@@ -49,6 +49,8 @@ export type Request =
   | { type: "setup-seen" }
   /** Opens the Mac app's window (its setup), through its native host. */
   | { type: "open-companion-app" }
+  /** Tries Apple's helper again after macOS blocked it in this browser (see SessionState). */
+  | { type: "retry-connection" }
   /** Generated passwords for the tab's site whose update Apple Passwords couldn't confirm. */
   | { type: "unconfirmed-passwords"; tabId?: number }
 

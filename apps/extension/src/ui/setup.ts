@@ -3,11 +3,11 @@
 // which opens on install and from the inline menu.
 
 import "./setup.css";
-import { COMPANION_DOWNLOAD_URL, REPO_URL, SETUP_COMMAND } from "../config.ts";
+import { COMPANION_CONNECT_URL, COMPANION_DOWNLOAD_URL, REPO_URL, SETUP_COMMAND } from "../config.ts";
 import { type Status, send } from "../messages.ts";
 import { h } from "./h.ts";
 import { CHECK, icon } from "./icons.ts";
-import { reportProblem } from "./report.ts";
+import { browserName, reportProblem } from "./report.ts";
 
 /** How the user chose to connect. Remembered because the popup closes while they do it. */
 type Route = "app" | "terminal";
@@ -29,7 +29,8 @@ export interface SetupOptions {
 
 /**
  * Renders the step the user is at: the welcome while this browser can't reach the helper, then
- * "connected", then (on the setup page) "all set". It moves on by itself as setup completes.
+ * "connected", then (on the setup page) "all set". It moves on by itself as setup completes. When
+ * the helper can't be reached although setup is done, it says why instead of "connected".
  */
 export async function setupFlow(status: Status, options: SetupOptions): Promise<HTMLElement> {
   const root = h("div", { class: "setup" });
@@ -42,10 +43,32 @@ export async function setupFlow(status: Status, options: SetupOptions): Promise<
     );
     return root;
   }
-  if (status.state === "no-helper") showWelcome(root, status, options);
-  else if (status.state === "unlocked") showDone(root, options);
-  else showConnected(root, options);
+  await showStep(root, status, options);
   return root;
+}
+
+type Step = "welcome" | "blocked" | "unreachable" | "connected" | "done";
+
+function stepOf(status: Status): Step {
+  if (status.state === "no-helper") return "welcome";
+  if (status.state === "blocked") return "blocked";
+  if (status.state === "disconnected" && status.error) return "unreachable";
+  return status.state === "unlocked" ? "done" : "connected";
+}
+
+async function showStep(root: HTMLElement, status: Status, options: SetupOptions) {
+  switch (stepOf(status)) {
+    case "welcome":
+      return showWelcome(root, status, options);
+    case "blocked":
+      return showBlocked(root, status, options);
+    case "unreachable":
+      return showUnreachable(root, status, options);
+    case "done":
+      return showDone(root, options);
+    case "connected":
+      return showConnected(root, options);
+  }
 }
 
 function connected(status: Status | undefined): boolean {
@@ -117,20 +140,100 @@ function showWelcome(root: HTMLElement, status: Status, options: SetupOptions) {
     }),
     route,
     waiting,
-    repair && status.error
-      ? h("details", { class: "details" }, h("summary", { textContent: "Details" }), status.error)
-      : null,
+    repair ? details(status.error) : null,
     // setup is where people get stuck, so the way to say so is right there
     reportProblem(),
   );
 
   poll(root, async () => {
     const latest = await send({ type: "get-status" }).catch(() => undefined);
-    if (!connected(latest)) return false;
-    if (latest?.state === "unlocked") showDone(root, options);
-    else showConnected(root, options);
+    if (!latest || (!connected(latest) && latest.state !== "blocked")) return false;
+    await showStep(root, latest, options);
     return true;
   });
+}
+
+/**
+ * Set up, but macOS kills Apple's helper as this browser starts it: only browsers Apple allows may
+ * (the helper's launch constraints). Nothing on our side can change that, so say so plainly.
+ */
+async function showBlocked(root: HTMLElement, status: Status, options: SetupOptions) {
+  // Forks often present themselves as Chrome (Ardia does), and Chrome itself is one Apple allows, so
+  // a blocked "Google Chrome" or "Chromium" is some other browser
+  const name = await browserName();
+  const who = name && !/^(google chrome|chromium)$/i.test(name) ? name : "this browser";
+  show(
+    root,
+    h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
+    h("h1", { textContent: `${capitalized(who)} can't use Apple Passwords yet` }),
+    h("p", {
+      class: "lead",
+      textContent: `macOS only lets Apple's password helper run in browsers Apple has approved, and ${who} isn't one yet.`,
+    }),
+    h(
+      "p",
+      { class: "note" },
+      `Apple's own iCloud Passwords extension can't work here either. Once Apple approves ${who}, Better Passwords starts working the next time you open it.`,
+    ),
+    retryRoute(root, status, options, `${capitalized(who)} is still blocked by macOS.`),
+    details(status.error),
+    reportProblem(),
+  );
+}
+
+/** Set up, but the helper didn't answer for some other reason (it usually does next time). */
+function showUnreachable(root: HTMLElement, status: Status, options: SetupOptions) {
+  show(
+    root,
+    h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
+    h("h1", { textContent: "Couldn't reach Apple Passwords" }),
+    h("p", { class: "lead", textContent: "Apple's password helper on your Mac didn't answer." }),
+    retryRoute(root, status, options, "Still no answer. Restarting the browser usually helps."),
+    details(status.error),
+    reportProblem(),
+  );
+}
+
+/**
+ * "Try Again", which tries the helper once more. Whatever it finds that's different (connected,
+ * blocked, or no answer) gets its own screen; the same again says `same` under the button.
+ */
+function retryRoute(root: HTMLElement, status: Status, options: SetupOptions, same: string) {
+  const button = h("button", { class: "button primary", type: "button", textContent: "Try Again" });
+  const outcome = h("p", { class: "note", attrs: { role: "status" } });
+  outcome.hidden = true;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "Trying…";
+    const latest = await send({ type: "retry-connection" }).catch(() => undefined);
+    if (latest && stepOf(latest) !== stepOf(status)) return showStep(root, latest, options);
+    button.disabled = false;
+    button.textContent = "Try Again";
+    outcome.textContent = same;
+    outcome.hidden = false;
+  });
+  return h("div", { class: "route" }, button, outcome);
+}
+
+/** The raw error, for a bug report; kept out of the way. */
+function details(error: string | undefined) {
+  return error ? h("details", { class: "details" }, h("summary", { textContent: "Details" }), error) : null;
+}
+
+function capitalized(text: string) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * Opens the companion app through its link. Chromium browsers ignore a link no app handles;
+ * Firefox would show an error page in its place, so there it opens in a hidden frame.
+ */
+function openCompanionLink(event: Event) {
+  if (!import.meta.env.FIREFOX) return;
+  event.preventDefault();
+  const frame = h("iframe", { src: COMPANION_CONNECT_URL, hidden: true });
+  document.body.append(frame);
+  setTimeout(() => frame.remove(), 5_000);
 }
 
 function appRoute(act: (route: Route) => void, switchTo: (route: Route) => void): Node[] {
@@ -142,9 +245,20 @@ function appRoute(act: (route: Route) => void, switchTo: (route: Route) => void)
     textContent: "Download the Mac App",
   });
   download.addEventListener("click", () => act("app"));
+  // someone adding another browser may have the app already; it connects the browser that opens it
+  const open = h("a", { href: COMPANION_CONNECT_URL, textContent: "Open Better Passwords" });
+  open.addEventListener("click", (event) => {
+    openCompanionLink(event);
+    act("app");
+  });
   const other = h("button", { class: "link", type: "button", textContent: "Rather not install an app?" });
   other.addEventListener("click", () => switchTo("terminal"));
-  return [download, h("p", { class: "note", textContent: "Free. Open it and click Connect." }), other];
+  return [
+    download,
+    h("p", { class: "note", textContent: "Free. Open it and click Connect." }),
+    h("p", { class: "note" }, "Already have it? ", open),
+    other,
+  ];
 }
 
 function terminalRoute(act: (route: Route) => void, switchTo: (route: Route) => void): Node[] {

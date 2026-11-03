@@ -126,4 +126,17 @@ describe("Companion", () => {
     await companion.state();
     expect(host.calls.filter((c) => c.message.type === "hello")).toHaveLength(3);
   });
+
+  it("tells the app whether the helper can start here", async () => {
+    const host = fakeHost(() => ({ ok: true }));
+    await new Companion(host.send).reportHelper(true);
+    expect(host.calls).toEqual([{ host: COMPANION_HOST, message: { type: "helper-status", blocked: true } }]);
+  });
+
+  it("reports quietly without the app, or with one from before reports", async () => {
+    const missing = fakeHost(() => new Error("Specified native messaging host not found."));
+    await expect(new Companion(missing.send).reportHelper(true)).resolves.toBeUndefined();
+    const old = fakeHost(() => ({ ok: false, error: "failed", message: "unknown request" }));
+    await expect(new Companion(old.send).reportHelper(false)).resolves.toBeUndefined();
+  });
 });

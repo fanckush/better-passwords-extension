@@ -1,5 +1,6 @@
 import "./style.css";
 import { send } from "@/src/messages.ts";
+import { toolbarAction } from "@/src/toolbar.ts";
 import { applySystemAccent } from "@/src/ui/accent.ts";
 import { h } from "@/src/ui/h.ts";
 import { setupFlow } from "@/src/ui/setup.ts";
@@ -13,9 +14,7 @@ const page = document.getElementById("page") as HTMLElement;
 
 /** Unlocking happens in the popup; open it where the browser allows, or say where it is. */
 async function openPopup(button: HTMLButtonElement) {
-  const action = (browser.action ?? (browser as unknown as { browserAction?: typeof browser.action }).browserAction) as
-    | { openPopup?: () => Promise<void> }
-    | undefined;
+  const action = toolbarAction() as { openPopup?: () => Promise<void> } | undefined;
   try {
     if (!action?.openPopup) throw new Error("no openPopup");
     await action.openPopup();

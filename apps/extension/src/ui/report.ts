@@ -74,6 +74,12 @@ export async function reportDetails(): Promise<ReportDetails> {
   return details;
 }
 
+/** This browser's own name ("Ardia", "Google Chrome"), without its version; undefined if it doesn't say. */
+export async function browserName(): Promise<string | undefined> {
+  const browser = (await reportDetails()).browser;
+  return browser?.replace(/\s+[\d.]+$/, "") || undefined;
+}
+
 /** "Something wrong? Email the developer or report it on GitHub." */
 export function reportProblem(): HTMLElement {
   const plain = reportLinks({});

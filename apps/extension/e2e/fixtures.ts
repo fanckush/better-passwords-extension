@@ -50,6 +50,14 @@ export function registerFakeHelper(dir: string, declineSaves = false): void {
 }
 
 /**
+ * The setup in a browser macOS blocks: the registration is there, but the helper dies before it
+ * answers, as when macOS kills it at launch. Each launch is logged, to count them.
+ */
+export function registerBlockedHelper(dir: string): void {
+  writeHost(dir, BRIDGE_HOST, `#!/bin/sh\necho launch >> "${join(dir, "launches.log")}"\nexit 0\n`);
+}
+
+/**
  * Registers the fake helper (and optionally the fake companion) inside a fresh profile. Without
  * `setUp`, the profile is like a browser before the setup script ran.
  */
@@ -107,6 +115,10 @@ type Fixtures = {
   vaultEntries: VaultEntry[] | undefined;
   /** Runs the setup (registers the fake helper) while the browser is open. */
   runSetup: () => void;
+  /** Runs the setup in a browser macOS blocks; see registerBlockedHelper. */
+  runBlockedSetup: () => void;
+  /** How many times the blocked helper was launched. */
+  blockedLaunches: () => number;
   context: BrowserContext;
   popupUrl: string;
   /** Search URLs of the requests to open the Passwords app that reached the fake helper. */
@@ -189,6 +201,20 @@ export const test = base.extend<Fixtures, { siteUrl: string }>({
   },
   runSetup: async ({ context, declineSaves }, use) => {
     await use(() => registerFakeHelper(profileDirs.get(context) ?? "", declineSaves));
+  },
+  runBlockedSetup: async ({ context }, use) => {
+    await use(() => registerBlockedHelper(profileDirs.get(context) ?? ""));
+  },
+  blockedLaunches: async ({ context }, use) => {
+    await use(() => {
+      try {
+        return readFileSync(join(profileDirs.get(context) ?? "", "launches.log"), "utf8")
+          .split("\n")
+          .filter(Boolean).length;
+      } catch {
+        return 0;
+      }
+    });
   },
   passwordsAppLaunches: async ({ context }, use) => {
     await use(() => helperLog(context, "launch").map((entry) => entry.url as string));

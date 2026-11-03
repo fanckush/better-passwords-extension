@@ -154,4 +154,12 @@ export class Companion {
       | undefined;
     if (!reply?.ok) throw new CompanionError("Open Better Passwords from your Applications folder.", "failed");
   }
+
+  /**
+   * Tells the app whether macOS lets Apple's helper start in this browser, for its list of
+   * browsers. Best effort: without the app, or with one from before this, nothing happens.
+   */
+  async reportHelper(blocked: boolean): Promise<void> {
+    await within(this.sendNative(COMPANION_HOST, { type: "helper-status", blocked }), QUICK_MS).catch(() => {});
+  }
 }

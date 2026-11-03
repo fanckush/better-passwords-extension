@@ -37,3 +37,9 @@ export const SITE_URL = "https://betterpasswords.app";
  * the newest release (apps/site/worker.js), so where releases live can change without an update.
  */
 export const COMPANION_DOWNLOAD_URL = `${SITE_URL}/download/mac`;
+
+/**
+ * Opens the companion app, which then connects the browser that opened it. Its scheme is in the
+ * app's Info.plist. Without the app, browsers ignore it (see openCompanionLink in src/ui/setup.ts).
+ */
+export const COMPANION_CONNECT_URL = "betterpasswords://connect";

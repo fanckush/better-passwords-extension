@@ -17,7 +17,10 @@ export class PortTransport implements Transport {
   }
 
   onClose(listener: (error?: string) => void): void {
-    this.#port.onDisconnect.addListener(() => listener(browser.runtime.lastError?.message));
+    // Firefox puts the reason on the port, Chromium in lastError
+    this.#port.onDisconnect.addListener((port) =>
+      listener((port as { error?: { message?: string } }).error?.message ?? browser.runtime.lastError?.message),
+    );
   }
 
   close(): void {
