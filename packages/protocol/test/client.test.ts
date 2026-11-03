@@ -264,9 +264,11 @@ describe("ApplePasswordsClient", () => {
 
     it("lets a new read replace it, keeping the session", async () => {
       const helper = silentOnce();
-      const client = await ApplePasswordsClient.connect(new MemoryTransport(helper));
+      const transport = new MemoryTransport(helper);
+      const client = await ApplePasswordsClient.connect(transport);
       await pair(helper, client);
       const first = client.getPassword("example.com", "bob", tab).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(transport.sent.some((message) => (message as HelperMessage).cmd === 5)).toBe(true));
       expect(await client.getPassword("example.com", "bob", tab)).toEqual({
         username: "bob",
         password: "battery staple",
@@ -289,10 +291,30 @@ describe("ApplePasswordsClient", () => {
       const client = await ApplePasswordsClient.connect(new MemoryTransport(helper));
       await pair(helper, client);
       const first = client.getPassword("example.com", "bob", tab).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(late).toBeDefined());
       await expect(client.getPassword("example.com", "alice@example.com", tab)).rejects.toMatchObject({
         code: "invalid-reply",
       });
       expect(await first).toMatchObject({ code: "superseded" });
+    });
+
+    it("refuses a late password for another site with the same username and tab", async () => {
+      let late: HelperMessage | undefined;
+      const helper = new TamperingHelper((request, reply) => {
+        if (request.cmd !== Command.GetPasswordForLoginName) return reply;
+        if (!late) {
+          late = reply;
+          return undefined;
+        }
+        return late;
+      });
+      const client = await ApplePasswordsClient.connect(new MemoryTransport(helper));
+      await pair(helper, client);
+      const first = client.getPassword("example.com", "bob", tab).catch((error: unknown) => error);
+      await vi.waitFor(() => expect(late).toBeDefined());
+      await expect(client.getPassword("other.test", "bob", tab)).rejects.toMatchObject({ code: "invalid-reply" });
+      expect(await first).toMatchObject({ code: "superseded" });
+      client.close();
     });
   });
 

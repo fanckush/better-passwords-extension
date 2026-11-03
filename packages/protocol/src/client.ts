@@ -26,6 +26,7 @@ import {
   SRP_WITH_RFC_VERIFICATION,
 } from "./messages.ts";
 import { SecureChannel } from "./secure-channel.ts";
+import { isSameSite } from "./sites.ts";
 import { SrpClient } from "./srp.ts";
 
 /** A native-messaging port. Implemented with `runtime.connectNative` in the extension. */
@@ -294,11 +295,13 @@ export class ApplePasswordsClient {
         { ACT: Action.Search, URL: hostname, USR: username },
         null,
       );
-      const entry = reply.Entries?.[0];
-      if (!entry || typeof entry.PWD !== "string") return undefined;
       // Replies carry no id: a late answer to a replaced read could arrive now. Use only the
-      // password of the login asked for.
-      if ((entry.USR ?? "") !== username) throw new ProtocolError("reply for another login", "invalid-reply");
+      // password of the login asked for, on the site asked for.
+      const entry = reply.Entries?.find(
+        (e) => (e.USR ?? "") === username && (e.sites ?? []).some((site) => isSameSite(site, hostname)),
+      );
+      if (!entry && reply.Entries?.length) throw invalid("reply for another site or login");
+      if (!entry || typeof entry.PWD !== "string") return undefined;
       return { username, password: entry.PWD };
     })();
   }
