@@ -63,6 +63,7 @@ public enum HostManifests {
             name: "Microsoft Edge", dataDirectory: "Microsoft Edge", kind: .chromium, bundleID: "com.microsoft.edgemac"),
         Browser(name: "Vivaldi", dataDirectory: "Vivaldi", kind: .chromium, bundleID: "com.vivaldi.Vivaldi"),
         Browser(name: "Arc", dataDirectory: "Arc/User Data", kind: .chromium, bundleID: "company.thebrowser.Browser"),
+        Browser(name: "Dia", dataDirectory: "Dia/User Data", kind: .chromium, bundleID: "company.thebrowser.dia"),
         Browser(name: "Helium", dataDirectory: "net.imput.helium", kind: .chromium, bundleID: "net.imput.helium"),
         Browser(name: "Crest", dataDirectory: "Crest/Chromium", kind: .chromium),
         Browser(

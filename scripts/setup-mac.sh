@@ -30,6 +30,7 @@ BraveSoftware/Brave-Browser-Beta|Brave Beta
 Microsoft Edge|Microsoft Edge
 Vivaldi|Vivaldi
 Arc/User Data|Arc
+Dia/User Data|Dia
 net.imput.helium|Helium
 Crest/Chromium|Crest
 com.ardia.browser/Chromium|Ardia

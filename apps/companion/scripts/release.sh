@@ -29,13 +29,24 @@ notarize() {
     xcrun notarytool submit "$1" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --wait
 }
 
+# Stapling downloads the ticket from Apple's CDN, which CI runners sometimes lose the connection to
+# (stapler error 68) or ask for before it's published (error 65). Both pass on a retry.
+staple() {
+    for wait in 10 20 40 80; do
+        xcrun stapler staple "$1" && return
+        echo "stapling failed, retrying in ${wait}s" >&2
+        sleep "$wait"
+    done
+    xcrun stapler staple "$1"
+}
+
 scripts/bundle.sh --version "$version" --sign "$MACOS_SIGN_IDENTITY"
 
 # notarize the app and staple its ticket, so it also opens offline once it's out of the disk image
 ditto -c -k --keepParent "$app" dist/notarize.zip
 notarize dist/notarize.zip
 rm dist/notarize.zip
-xcrun stapler staple "$app"
+staple "$app"
 spctl --assess --type execute --verbose "$app"
 
 # the disk image: the app next to a link to Applications, to drag it onto
@@ -48,7 +59,7 @@ hdiutil create -volname "Better Passwords" -srcfolder "$staging" -fs HFS+ -forma
 rm -rf "$staging"
 codesign --sign "$MACOS_SIGN_IDENTITY" --timestamp "$dmg"
 notarize "$dmg"
-xcrun stapler staple "$dmg"
+staple "$dmg"
 spctl --assess --type open --context context:primary-signature --verbose "$dmg"
 
 # the appcast, one item: the site serves the newest release's copy (apps/site/worker.js)
