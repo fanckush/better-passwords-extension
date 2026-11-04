@@ -282,33 +282,44 @@ export default defineBackground(() => {
     caller: Caller & { kind: "content-script" },
     kind: FieldKind,
     unsure = false,
+    signIn = false,
   ): Promise<AutofillStatus> {
-    const { show } = await menuToShow(caller, kind);
+    const { show } = await menuToShow(caller, kind, signIn);
     if (show === "none") return { show };
     const orGenerate = kind === "login" && unsure && (await getSettings()).generatePasswords;
     return { show, nonce: issueMenuNonce(caller.tabId), ...(orGenerate ? { orGenerate } : {}) };
   }
 
-  async function menuToShow(caller: Caller & { kind: "content-script" }, kind: FieldKind): Promise<AutofillStatus> {
+  async function menuToShow(
+    caller: Caller & { kind: "content-script" },
+    kind: FieldKind,
+    signIn: boolean,
+  ): Promise<AutofillStatus> {
     const url = fillableUrl(caller.url);
     const settings = await getSettings();
     if (!url) return { show: "none" };
     // "when signing in" covers login fields, "when signing up" new-password and email fields
+    // (an email field that may sign in lists the site's saved logins too, "when signing in")
     const enabled =
       kind === "login"
         ? settings.inlineMenu
         : kind === "one-time-code"
           ? settings.oneTimeCodes
-          : settings.generatePasswords;
+          : kind === "email"
+            ? settings.generatePasswords || (signIn && settings.inlineMenu)
+            : settings.generatePasswords;
     if (!enabled) return { show: "none" };
     if (kind === "email") {
-      // Hide My Email works without Apple Passwords, so no unlocking is needed
-      const offered =
-        settings.hideMyEmail ||
-        settings.hideMyEmailHint ||
-        settings.companionEmailsHint ||
-        (await companion.state()) !== "not-installed";
-      return { show: offered ? "email" : "none" };
+      // Hide My Email works without Apple Passwords, so it's offered even while locked
+      const suggests =
+        settings.generatePasswords &&
+        (settings.hideMyEmail ||
+          settings.hideMyEmailHint ||
+          settings.companionEmailsHint ||
+          (await companion.state()) !== "not-installed");
+      // a menu with nothing to offer closes itself
+      const fills = signIn && settings.inlineMenu && ((await connectedUnlocked()) || canUnlock());
+      return { show: suggests || fills ? "email" : "none" };
     }
     // "no-helper" too: the user may have just run the setup. Never "blocked": see HELPER_BLOCKED
     if (["disconnected", "closed", "no-helper"].includes(session.status.state)) {
@@ -596,11 +607,45 @@ export default defineBackground(() => {
     });
   }
 
-  /** What email fields offer: Hide My Email above, the user's own emails below. */
-  async function emailSuggestions(tabId: number): Promise<EmailSuggestions> {
+  /** What email fields offer: the site's saved logins first, then Hide My Email, the user's own emails below. */
+  async function emailSuggestions(tabId: number, withLogins = false): Promise<EmailSuggestions> {
     const settings = await getSettings();
-    const [hme, contacts] = await Promise.all([hideMyEmailState(tabId, settings), contactEmailsState(settings)]);
-    return { hideMyEmail: hme, contacts };
+    const off = { state: "off" } as const;
+    const [hme, contacts, logins] = await Promise.all([
+      settings.generatePasswords ? hideMyEmailState(tabId, settings) : off,
+      settings.generatePasswords ? contactEmailsState(settings) : off,
+      withLogins && settings.inlineMenu ? savedLogins(tabId) : undefined,
+    ]);
+    return { hideMyEmail: hme, contacts, ...(logins ? { logins } : {}) };
+  }
+
+  /** Whether Apple Passwords is unlocked, reconnecting first if the connection was lost. */
+  async function connectedUnlocked(): Promise<boolean> {
+    if (["disconnected", "closed"].includes(session.status.state)) await session.connect().catch(() => {});
+    return session.isUnlocked;
+  }
+
+  /**
+   * Whether unlocking can work: as for login fields, not when macOS blocks the helper, nor before
+   * this browser is set up (an email field doesn't ask for that: its other suggestions work without).
+   */
+  function canUnlock(): boolean {
+    return !["blocked", "no-helper"].includes(session.status.state);
+  }
+
+  /** The usernames saved for the tab's site, or "locked" if they can't be listed until unlocked. */
+  async function savedLogins(tabId: number): Promise<EmailSuggestions["logins"]> {
+    if (!(await connectedUnlocked())) return canUnlock() ? { state: "locked" } : undefined;
+    const url = await tabUrl(tabId);
+    if (!url) return undefined;
+    try {
+      const client = await session.unlockedClient();
+      const logins = await client.getLogins(url.hostname, { tabId });
+      if (logins.length === 0) return undefined;
+      return { state: "ready", hostname: url.hostname, usernames: logins.map(({ username }) => username) };
+    } catch {
+      return undefined;
+    }
   }
 
   async function hideMyEmailState(tabId: number, settings: Settings): Promise<HideMyEmailState> {
@@ -673,7 +718,8 @@ export default defineBackground(() => {
 
   async function handle(request: Request, caller: Caller): Promise<unknown> {
     if (caller.kind === "content-script") {
-      if (request.type === "autofill-status") return autofillStatus(caller, request.kind, request.unsure);
+      if (request.type === "autofill-status")
+        return autofillStatus(caller, request.kind, request.unsure, request.signIn);
       if (request.type === "generated-username") {
         trackUsername(caller, request.username);
         return null;
@@ -870,7 +916,7 @@ export default defineBackground(() => {
       case "set-settings":
         return saveSettings(request.settings);
       case "email-suggestions":
-        return emailSuggestions(tabOf(caller));
+        return emailSuggestions(tabOf(caller), request.logins);
       case "enable-hide-my-email":
         await saveSettings({ hideMyEmail: true });
         return emailSuggestions(tabOf(caller));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fieldKind, isLoginField, isUnsurePasswordField, oneTimeCodeGroup } from "../src/autofill/fields.ts";
+import { fieldKind, isLoginField, isUnsurePasswordField, maySignIn, oneTimeCodeGroup } from "../src/autofill/fields.ts";
 
 function field(html: string, selector = "#f"): HTMLInputElement {
   document.body.innerHTML = html;
@@ -271,5 +271,31 @@ describe("isUnsurePasswordField", () => {
     ["text field", `<form><input id="f" type="email"><input type="password"></form>`],
   ])("is sure of a %s", (_, html) => {
     expect(isUnsurePasswordField(field(html))).toBe(false);
+  });
+});
+
+describe("maySignIn", () => {
+  it.each([
+    // claude.ai's: signs in or up with a code sent by email, nothing says which
+    ["continue-with-email field", `<form><input id="f" type="email"><button>Continue with email</button></form>`],
+    ["lone email field", `<form><input id="f" type="email"></form>`],
+  ])("lists saved logins on a %s", (_, html) => {
+    const el = field(html);
+    expect(fieldKind(el)).toBe("email");
+    expect(maySignIn(el)).toBe(true);
+  });
+
+  it.each([
+    ["sign-up's email", `<form><input id="f" type="email"><input type="password" autocomplete="new-password"></form>`],
+    [
+      "email of a form that creates an account",
+      `<form><input id="f" type="email"><button>Create account</button></form>`,
+    ],
+    ["newsletter email", `<form id="newsletter"><input id="f" type="email"></form>`],
+    ["email with a subscribe button", `<form><input id="f" type="email"><button>Subscribe</button></form>`],
+  ])("not on a %s", (_, html) => {
+    const el = field(html);
+    expect(fieldKind(el)).toBe("email");
+    expect(maySignIn(el)).toBe(false);
   });
 });

@@ -126,13 +126,18 @@ export class MenuHost {
    * `nonce` comes from the background, which accepts requests from this menu only with it.
    * `orGenerate`: with no saved logins, suggest a strong password instead (a field that may be a sign-up's).
    * `weaker`: the password in "generated" modes is weaker than usual, held back by the site's rules.
+   * `logins`: an email field that may sign in lists the site's saved logins too.
    */
   open(
     anchor: HTMLInputElement,
     mode: MenuMode,
     kind: FieldKind,
     nonce: string,
-    { orGenerate = false, weaker = false }: { orGenerate?: boolean; weaker?: boolean } = {},
+    {
+      orGenerate = false,
+      weaker = false,
+      logins = false,
+    }: { orGenerate?: boolean; weaker?: boolean; logins?: boolean } = {},
   ): void {
     this.#anchor = anchor;
     this.#nonce = nonce;
@@ -150,6 +155,7 @@ export class MenuHost {
     const params = new URLSearchParams({ nonce: this.#nonce, mode, kind, field });
     if (orGenerate) params.set("orGenerate", "1");
     if (weaker) params.set("weaker", "1");
+    if (logins) params.set("logins", "1");
     this.#frame = createFrame(`${this.menuUrl}#${params}`);
     this.#shadow.replaceChildren(this.#frame);
     if (!this.#host.isConnected) document.documentElement.append(this.#host);

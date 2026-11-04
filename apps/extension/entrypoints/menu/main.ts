@@ -41,6 +41,8 @@ const onPasswordField = params.get("field") === "password";
 /** A password field that may be a sign-up's: with no saved logins, suggest a strong password. */
 const orGenerate = params.get("orGenerate") === "1";
 const mode = params.get("mode");
+/** An email field that may sign in: the site's saved logins are listed first. */
+const withLogins = params.get("logins") === "1";
 /** The generated password in the field ("generated" modes) is weaker than usual: the site's rules. */
 const weaker = params.get("weaker") === "1";
 const panel = document.getElementById("menu") as HTMLElement;
@@ -288,7 +290,7 @@ browser.runtime.onMessage.addListener((request: MenuMessage, sender) => {
   // unlocked or locked elsewhere, like the popup
   if (request.type === "session-changed") {
     if (request.unlocked) void unlocked();
-    else if (view === "unlocked") void showLocked();
+    else if (view === "unlocked") void (mode === "email" ? showEmail() : showLocked());
   }
   // a new code arrived (by SMS, say): list them again, unless one is being filled
   if (request.type === "one-time-codes-changed" && kind === "one-time-code" && view === "unlocked") {
@@ -428,7 +430,12 @@ async function showEmail() {
   // asking iCloud can take a second or two: show that something is happening, unless it's quick
   const loading = setTimeout(() => render(loadingRow(ENVELOPE, "Hide My Email")), 150);
   try {
-    renderEmail(await whileAsking(send({ type: "email-suggestions", nonce })));
+    const [suggestions, status] = await Promise.all([
+      whileAsking(send({ type: "email-suggestions", nonce, logins: withLogins })),
+      send({ type: "get-status" }).catch(() => undefined),
+    ]);
+    touchId = status?.touchId === true;
+    renderEmail(suggestions);
   } catch (e) {
     render(message(messageOf(e), true));
   } finally {
@@ -467,10 +474,26 @@ function renderEmail(suggestions: EmailSuggestions, error?: string) {
     return lower.startsWith(prefix) && lower !== prefix;
   };
 
-  // below Hide My Email: the user's own emails, from their contact card
+  // first, like Safari: the logins saved for the site, which this field may well be signing in to
+  // (locked: unlocking first, as login fields offer)
+  const saved: Node[] = [];
+  const usernames = new Set<string>();
+  const { logins } = suggestions;
+  view = logins?.state === "ready" ? "unlocked" : logins?.state === "locked" ? "locked" : "other";
+  if (logins?.state === "ready") {
+    for (const username of logins.usernames) {
+      usernames.add(username.toLowerCase());
+      if (!username.toLowerCase().startsWith(prefix)) continue;
+      saved.push(row(KEY, username || "(no username)", logins.hostname, () => void fillSavedLogin(username)));
+    }
+  } else if (!typing && logins?.state === "locked") {
+    saved.push(unlockRow());
+  }
+
+  // below Hide My Email: the user's own emails, from their contact card (not again if saved)
   const own: Node[] = [];
   if (contacts.state === "ready") {
-    for (const email of contacts.emails.filter(completes)) {
+    for (const email of contacts.emails.filter((email) => completes(email) && !usernames.has(email.toLowerCase()))) {
       own.push(row(PERSON, email, "From your contact card", () => void fillOwnEmail(email)));
     }
   } else if (!typing && contacts.state === "hint") {
@@ -517,8 +540,9 @@ function renderEmail(suggestions: EmailSuggestions, error?: string) {
   if (error) rows.push(message(error, true));
   // while typing, the addresses it starts come first (nearest the field, first on ↓), Hide My Email after
   const [first, then] = typing ? [own, rows] : [rows, own];
-  const all =
-    first.length > 0 && then.length > 0 ? [...first, h("hr", { class: "separator" }), ...then] : [...first, ...then];
+  const all = [saved, first, then]
+    .filter((section) => section.length > 0)
+    .flatMap((section, i) => (i === 0 ? section : [h("hr", { class: "separator" }), ...section]));
 
   // nothing to offer at all: closed; nothing left for what's typed: hidden until it's emptied
   if (all.length === 0) return typing ? hide() : close();
@@ -560,6 +584,18 @@ async function fillOwnEmail(email: string) {
   }
 }
 
+/** Fills a saved login in, as the logins menu does: the password too, if the form asks for one. */
+async function fillSavedLogin(username: string) {
+  try {
+    const { result } = await send({ type: "fill-from-menu", nonce, username });
+    if (result !== "filled") renderEmail(lastSuggestions, fillError(result));
+  } catch (e) {
+    // chosen again (say, after dismissing Touch ID): that newer choice carries on
+    if ((e as { code?: string }).code === "superseded") return;
+    renderEmail(lastSuggestions, messageOf(e));
+  }
+}
+
 function fillError(result: string): string {
   return result === "menu-hidden"
     ? "The page tried to hide this menu, so nothing was filled in."
@@ -584,7 +620,11 @@ async function enableHideMyEmail() {
       renderEmail(lastSuggestions);
       return;
     }
-    renderEmail(await whileAsking(send({ type: "enable-hide-my-email", nonce })));
+    const { logins } = lastSuggestions;
+    renderEmail({
+      ...(await whileAsking(send({ type: "enable-hide-my-email", nonce }))),
+      ...(logins ? { logins } : {}),
+    });
   } catch (e) {
     render(message(messageOf(e), true));
   }
@@ -627,6 +667,7 @@ async function useAddress(address: string, reserve: boolean) {
 /** After unlocking, here or elsewhere: the menu's real content, if it was waiting for that. */
 async function unlocked() {
   if (view !== "locked") return;
+  if (mode === "email") return showEmail();
   if (kind === "one-time-code") return showCodes();
   await (kind === "new-password" ? showGenerate() : showLogins());
 }
@@ -658,13 +699,17 @@ async function fill(username: string) {
 async function showLocked(error?: string) {
   view = "locked";
   const status = await send({ type: "get-status" }).catch(() => undefined);
-  const touchId = status?.touchId === true;
-  render(
-    // with the companion app, Touch ID replaces typing the code; the row says so underneath
-    row(LOCK, unlockTitle(), touchId ? "Touch ID enters the code for you" : DISPLAY_NAME, () =>
-      touchId ? void unlockWithTouchId() : void startPairing(),
-    ),
-    error ? message(error, true) : null,
+  touchId = status?.touchId === true;
+  render(unlockRow(), error ? message(error, true) : null);
+}
+
+/** Whether the companion app can unlock with Touch ID (as of the last status asked for). */
+let touchId = false;
+
+function unlockRow(): HTMLButtonElement {
+  // with the companion app, Touch ID replaces typing the code; the row says so underneath
+  return row(LOCK, unlockTitle(), touchId ? "Touch ID enters the code for you" : DISPLAY_NAME, () =>
+    touchId ? void unlockWithTouchId() : void startPairing(),
   );
 }
 

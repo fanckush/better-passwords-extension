@@ -3,6 +3,7 @@ import {
   fieldKind,
   isOneTimeCodeField,
   isUnsurePasswordField,
+  maySignIn,
   mayTakeNewPassword,
   oneTimeCodeGroup,
 } from "@/src/autofill/fields.ts";
@@ -70,7 +71,8 @@ export default defineContentScript({
       if (kind === "one-time-code" && oneTimeCodeGroup(field).some((box) => box.value !== "")) return;
       const ticket = ++request;
       const unsure = kind === "login" && isUnsurePasswordField(field);
-      const { show, nonce, orGenerate } = await send({ type: "autofill-status", kind, unsure }).catch(() => ({
+      const signIn = kind === "email" && maySignIn(field);
+      const { show, nonce, orGenerate } = await send({ type: "autofill-status", kind, unsure, signIn }).catch(() => ({
         show: "none" as const,
         nonce: undefined,
         orGenerate: undefined,
@@ -89,7 +91,7 @@ export default defineContentScript({
           menu.close();
         }
       } else if (show === "email" && kind === "email") {
-        menu.open(field, "email", kind, nonce);
+        menu.open(field, "email", kind, nonce, { logins: signIn });
       } else if (show === "codes" && kind === "one-time-code") {
         menu.open(field, "codes", kind, nonce);
       } else if (show === "logins" || show === "generate" || show === "locked" || show === "setup") {

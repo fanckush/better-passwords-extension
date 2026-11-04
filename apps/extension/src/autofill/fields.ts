@@ -19,6 +19,8 @@ const LOGIN_HINT = /sign[\s_-]?in|log[\s_-]?in/i;
 const OPTIONAL_HINT = /optional|facultati|opcional|opzionale/i;
 /** A field for the person's name, which only a sign-up asks for. Not "username". */
 const PERSON_NAME = /(full|first|last|given|family|sur|fore)[\s_-]?name|vorname|nachname|pr[ée]nom/i;
+/** A newsletter's sign-up: an email field that never signs in. */
+const NEWSLETTER_HINT = /newsletter|subscri|abonn/i;
 /** A link to reset a forgotten password: the page signs in. */
 const PASSWORD_RESET = /forg[eo]t|reset|vergessen|oubli|olvid/i;
 
@@ -210,6 +212,17 @@ export function mayTakeNewPassword(el: HTMLInputElement): boolean {
 function inSignupForm(el: HTMLInputElement): boolean {
   const scope = el.form ?? el.ownerDocument;
   return passwordFields(scope).some(isNewPasswordField) || looksLikeSignup(el.form);
+}
+
+/**
+ * An email field that may sign in, for all anyone can tell: outside any sign-up form or newsletter
+ * (a sign-in by a code sent by email, or one page for signing in and up). The site's logins are
+ * offered there, or unlocking for them.
+ */
+export function maySignIn(el: HTMLInputElement): boolean {
+  if (inSignupForm(el)) return false;
+  const form = el.form ? `${ownText(el.form)} ${buttonText(el.form)}` : "";
+  return !NEWSLETTER_HINT.test(`${textOf(el)} ${form}`);
 }
 
 function hasPasswordFieldNearby(el: HTMLInputElement): boolean {

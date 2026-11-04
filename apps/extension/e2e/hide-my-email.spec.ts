@@ -303,3 +303,31 @@ test("the email field's companion hint opens the extension's page about the app"
   const about = await opened;
   await expect(about).toHaveURL(/\/companion\.html$/);
 });
+
+test.describe("on a page that signs in or up by email", () => {
+  test.use({
+    companion: "ok",
+    // Playwright reads a bare array here as [value, options], so the list goes in a pair of its own
+    vaultEntries: [[{ hostname: "localhost", username: "jane@example.com", password: "none" }], { scope: "test" }],
+  });
+
+  test("lists the site's saved login first, then the suggestions", async ({ context, siteUrl }) => {
+    const page = await context.newPage();
+    await page.goto(`${siteUrl}/continue.html`);
+    const menu = await emailMenu(page);
+    // locked: unlocking comes first, the suggestions that don't need it below
+    await expect(menu.locator(".row").first()).toContainText("Unlock to fill passwords");
+    await expect(menu.getByText("Use Hide My Email")).toBeVisible();
+    // with the app, Touch ID types the code
+    await choose(menu, "Unlock to fill passwords");
+    await expect(menu.locator(".row").first()).toContainText("jane@example.com");
+    await expect(menu.locator(".row").first()).toContainText("localhost");
+    // the contact card's other address is still offered; the saved one isn't listed twice
+    await expect(menu.getByText("jane@example.com")).toHaveCount(1);
+    await expect(menu.getByText("jane.work@example.com")).toBeVisible();
+    await expect(menu.getByText("Use Hide My Email")).toBeVisible();
+
+    await choose(menu, "jane@example.com");
+    await expect(page.locator("#email")).toHaveValue("jane@example.com");
+  });
+});

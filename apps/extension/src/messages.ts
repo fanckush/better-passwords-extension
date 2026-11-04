@@ -37,7 +37,8 @@ export type Request =
   /** Fills the chosen password; Apple Passwords is asked to save it when the form is submitted. */
   | { type: "use-generated-password"; nonce: string; style: PasswordStyle }
   // Hide My Email, on email fields (the menu is bound to its tab)
-  | { type: "email-suggestions"; nonce: string }
+  /** `logins`: the site's saved logins too (an email field that may sign in). */
+  | { type: "email-suggestions"; nonce: string; logins?: boolean }
   /** The user clicked the hint: turn Hide My Email on. */
   | { type: "enable-hide-my-email"; nonce: string }
   | { type: "dismiss-hide-my-email-hint" }
@@ -65,7 +66,8 @@ export type Request =
   | { type: "open-passwords-app"; tabId?: number }
   // content script → background (the only requests content scripts may send)
   /** `unsure`: a password field that may be a sign-up's (see isUnsurePasswordField). */
-  | { type: "autofill-status"; kind: FieldKind; unsure?: boolean }
+  /** `signIn`: an email field that may sign in (see maySignIn), which lists the site's logins. */
+  | { type: "autofill-status"; kind: FieldKind; unsure?: boolean; signIn?: boolean }
   /** The username next to a password we generated (as it's typed). */
   | { type: "generated-username"; username: string }
   /** The field holding a password we generated went away (a dialog closed, a step moved on). */
@@ -210,6 +212,12 @@ export type ContactEmailsState =
 export interface EmailSuggestions {
   hideMyEmail: HideMyEmailState;
   contacts: ContactEmailsState;
+  /**
+   * The logins saved for the site, when unlocked: an email field nothing marks as a sign-in's may
+   * still be one (a sign-in by emailed code, or one page for signing in and up), so like Safari
+   * they're listed first. "locked": none can be listed until unlocked, so the menu offers that first.
+   */
+  logins?: { state: "ready"; hostname: string; usernames: string[] } | { state: "locked" };
 }
 
 export type NewPasswordResult = "filled" | "menu-hidden" | "no-fields" | "origin-mismatch";
