@@ -24,8 +24,11 @@ export interface Suggestion {
 export interface FieldRules {
   minLength?: number;
   maxLength?: number;
-  /** The field's `passwordrules` attribute, verbatim. */
-  passwordRules?: string;
+  /**
+   * The field's `passwordrules` attribute, verbatim. Several when the password goes into several
+   * fields (a confirmation): it must meet all of them.
+   */
+  passwordRules?: string | string[];
 }
 
 /** The site's rules can't give a password worth suggesting. */
@@ -57,6 +60,8 @@ const DEFAULT_LENGTH = 20;
 const MAX_LENGTH = 64;
 /** Longer `passwordrules` are ignored: no real site needs that much. */
 const MAX_RULES_LENGTH = 4096;
+/** How many fields' `passwordrules` are combined, at most. */
+const MAX_RULE_SETS = 8;
 const ATTEMPTS = 128;
 
 // How many passwords the rules leave (a lower bound), where each strength starts.
@@ -74,6 +79,8 @@ interface ParsedRules {
   /** Every character must come from the union of these (empty: no restriction). */
   allowed: string;
   maxConsecutive?: number;
+  /** The fields' rules allow no character in common: no password meets them all. */
+  conflict?: boolean;
 }
 
 /** Uniform random index below `n`, without modulo bias. */
@@ -103,7 +110,31 @@ function unique(chars: string): string {
  */
 export function parseRules(rules: FieldRules, classes = FULL): ParsedRules {
   const parsed: ParsedRules = { minLength: 0, maxLength: MAX_LENGTH, required: [], allowed: "" };
-  const text = rules.passwordRules ?? "";
+  // several fields' rules: a password must meet every one of them
+  let restricted = false;
+  for (const text of [rules.passwordRules ?? []].flat().slice(0, MAX_RULE_SETS)) {
+    const one = parseOne(text, classes);
+    parsed.minLength = Math.max(parsed.minLength, one.minLength);
+    parsed.maxLength = Math.min(parsed.maxLength, one.maxLength);
+    parsed.required.push(...one.required);
+    if (one.maxConsecutive)
+      parsed.maxConsecutive = Math.min(parsed.maxConsecutive ?? one.maxConsecutive, one.maxConsecutive);
+    // only the characters every field allows
+    if (one.allowed) {
+      parsed.allowed = restricted ? [...parsed.allowed].filter((c) => one.allowed.includes(c)).join("") : one.allowed;
+      restricted = true;
+    }
+  }
+  // fields that allow no character in common
+  if (restricted && !parsed.allowed) parsed.conflict = true;
+  if (rules.minLength && rules.minLength > 0) parsed.minLength = Math.max(parsed.minLength, rules.minLength);
+  if (rules.maxLength && rules.maxLength > 0) parsed.maxLength = Math.min(parsed.maxLength, rules.maxLength);
+  return parsed;
+}
+
+/** One field's `passwordrules`. */
+function parseOne(text: string, classes: Record<string, string>): ParsedRules {
+  const parsed: ParsedRules = { minLength: 0, maxLength: MAX_LENGTH, required: [], allowed: "" };
   for (const part of text.length > MAX_RULES_LENGTH ? [] : text.split(";")) {
     const separator = part.indexOf(":");
     if (separator < 0) continue;
@@ -122,8 +153,6 @@ export function parseRules(rules: FieldRules, classes = FULL): ParsedRules {
       parsed.allowed += chars;
     }
   }
-  if (rules.minLength && rules.minLength > 0) parsed.minLength = Math.max(parsed.minLength, rules.minLength);
-  if (rules.maxLength && rules.maxLength > 0) parsed.maxLength = Math.min(parsed.maxLength, rules.maxLength);
   parsed.allowed = unique(parsed.allowed);
   return parsed;
 }
@@ -139,6 +168,7 @@ function characterSet(list: string, classes: Record<string, string>): string {
 }
 
 function satisfies(password: string, rules: ParsedRules): boolean {
+  if (rules.conflict) return false;
   if (password.length < rules.minLength || password.length > rules.maxLength) return false;
   if (rules.allowed && [...password].some((c) => !rules.allowed.includes(c))) return false;
   if (!rules.required.every((set) => [...password].some((c) => set.includes(c)))) return false;
@@ -207,7 +237,7 @@ function plans(style: PasswordStyle, fieldRules: FieldRules, classes: Record<str
   if (style === "alphanumeric") pool = [...pool].filter((c) => /[a-z0-9]/i.test(c)).join("");
   const length = Math.min(Math.max(DEFAULT_LENGTH, rules.minLength), rules.maxLength);
   // too short for the minimum, or for one character of each required set
-  if (length < rules.minLength || length < rules.required.length || pool === "") {
+  if (rules.conflict || length < rules.minLength || length < rules.required.length || pool === "") {
     throw new PasswordRulesError("contradict");
   }
   // a required set that nothing in the pool belongs to (no special characters, but [!#] required)

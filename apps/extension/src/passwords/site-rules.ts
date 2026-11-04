@@ -29,7 +29,7 @@ export function siteRules(hostname: string, rules: Record<string, KnownRules> = 
 
 /** The field's rules, with the list's for this host when the field has no `passwordrules` of its own. */
 export function withSiteRules(field: FieldRules, hostname: string): FieldRules {
-  if (field.passwordRules) return field;
+  if (field.passwordRules?.length) return field;
   const listed = siteRules(hostname);
   return listed ? { ...field, passwordRules: listed } : field;
 }

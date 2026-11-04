@@ -163,6 +163,39 @@ describe("parseRules", () => {
   });
 });
 
+describe("several fields' rules", () => {
+  it("meets all of them at once: the strictest of each", () => {
+    const rules = parseRules({
+      passwordRules: [
+        "minlength: 10; maxlength: 30; max-consecutive: 3; allowed: lower, digit",
+        "minlength: 12; maxlength: 16; max-consecutive: 2; required: digit; allowed: lower, upper",
+      ],
+    });
+    expect(rules.minLength).toBe(12);
+    expect(rules.maxLength).toBe(16);
+    expect(rules.maxConsecutive).toBe(2);
+    expect(rules.required).toEqual(["0123456789"]);
+    // only what both allow: lower and digits (the second allows digits through its required set)
+    expect(rules.allowed).toBe("abcdefghijklmnopqrstuvwxyz0123456789");
+  });
+
+  it("makes passwords that fit every field", () => {
+    repeat(50, () => {
+      const generated = password("strong", {
+        passwordRules: ["allowed: lower, digit; maxlength: 16", "required: digit; required: lower; minlength: 12"],
+      });
+      expect(generated).toMatch(/^[a-z0-9]{12,16}$/);
+      expect(generated).toMatch(/[0-9]/);
+    });
+  });
+
+  it("suggests nothing when the fields allow no character in common", () => {
+    expect(() => generatePassword("strong", { passwordRules: ["allowed: digit", "allowed: lower"] })).toThrow(
+      "Couldn't create a password this site would accept.",
+    );
+  });
+});
+
 describe("allowsSpecialCharacters", () => {
   it("depends on the site's rules, not on the password that came out", () => {
     expect(allowsSpecialCharacters({})).toBe(true);

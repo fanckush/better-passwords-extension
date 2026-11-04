@@ -22,6 +22,7 @@ import {
   fillEmail,
   fillNewPassword,
   fillOneTimeCode,
+  newPasswordRules,
   usernameNear,
 } from "@/src/fill.ts";
 import {
@@ -364,13 +365,8 @@ export default defineContentScript({
           }
           newPasswordFields.set(message.nonce, field);
           const context: NewPasswordContext = {
-            rules: {
-              ...(field.minLength > 0 ? { minLength: field.minLength } : {}),
-              ...(field.maxLength > 0 ? { maxLength: field.maxLength } : {}),
-              ...(field.getAttribute("passwordrules")
-                ? { passwordRules: field.getAttribute("passwordrules") ?? "" }
-                : {}),
-            },
+            // the limits of every field the password goes into, the confirmation's too
+            rules: newPasswordRules(field),
             // or the one typed on an earlier step (multi-step sign-ups): then nobody's account is guessed
             username: usernameNear(field) || lastUsername,
             asksForUsername: asksForUsername(field),

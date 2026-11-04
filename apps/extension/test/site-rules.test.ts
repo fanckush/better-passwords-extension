@@ -48,6 +48,12 @@ describe("withSiteRules", () => {
     expect(withSiteRules({ passwordRules: "minlength: 30;" }, "163.com")).toEqual({ passwordRules: "minlength: 30;" });
   });
 
+  it("leaves fields with their own passwordrules alone, several too", () => {
+    expect(withSiteRules({ passwordRules: ["minlength: 30;"] }, "163.com")).toEqual({
+      passwordRules: ["minlength: 30;"],
+    });
+  });
+
   it("leaves unlisted sites alone", () => {
     expect(withSiteRules({ maxLength: 20 }, "example.net")).toEqual({ maxLength: 20 });
   });

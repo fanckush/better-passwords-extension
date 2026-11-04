@@ -103,6 +103,21 @@ test("says why a password the site's rules held back is weaker, and still fills 
   await expect(page.locator("#new")).toHaveValue(/^.{8}$/);
 });
 
+test("follows the first field's limits when opened on the confirmation", async ({ context, siteUrl }) => {
+  const page = await context.newPage();
+  await signupWith(page, siteUrl, { maxlength: "8" });
+  await page.locator("#confirm").click();
+  const menu = await menuFrame(page);
+  if (await menu.getByText("Unlock to suggest a strong password").isVisible()) {
+    await choose(menu, "Unlock to suggest a strong password");
+    await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  }
+  await expect(menu.getByText("Suggested Password", { exact: true })).toBeVisible();
+  await choose(menu, "Suggested Password");
+  await expect(page.locator("#new")).toHaveValue(/^.{8}$/);
+  await expect(page.locator("#confirm")).toHaveValue(await page.locator("#new").inputValue());
+});
+
 test("offers no alternative without special characters when the site requires one", async ({ context, siteUrl }) => {
   const page = await context.newPage();
   await signupWith(page, siteUrl, {

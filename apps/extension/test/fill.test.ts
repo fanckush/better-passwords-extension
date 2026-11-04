@@ -5,6 +5,7 @@ import {
   fillEmail,
   fillNewPassword,
   fillOneTimeCode,
+  newPasswordRules,
   usernameNear,
 } from "../src/fill.ts";
 
@@ -119,6 +120,30 @@ describe("fillNewPassword", () => {
     expect(value("#p2")).toBe("abc-DEF-123");
     expect(value("#email")).toBe("");
     expect(value("#other")).toBe("");
+  });
+
+  it("reads the limits of every field it fills, opened on the confirmation too", () => {
+    page(`<form><input id="email" type="email">
+            <input id="p1" type="password" autocomplete="new-password" maxlength="8" passwordrules="required: digit">
+            <input id="p2" type="password" autocomplete="new-password" minlength="6"></form>
+          <form><input id="other" type="password" autocomplete="new-password" maxlength="4"></form>`);
+    const rules = { minLength: 6, maxLength: 8, passwordRules: ["required: digit"] };
+    expect(newPasswordRules(input("#p2"))).toEqual(rules);
+    expect(newPasswordRules(input("#p1"))).toEqual(rules);
+  });
+
+  it("keeps every field's passwordrules, whichever field the menu is on", () => {
+    page(`<form><input id="p1" type="password" passwordrules="maxlength: 8">
+            <input id="p2" type="password" passwordrules="required: digit"></form>`);
+    const rules = { passwordRules: ["maxlength: 8", "required: digit"] };
+    expect(newPasswordRules(input("#p2"))).toEqual(rules);
+    expect(newPasswordRules(input("#p1"))).toEqual(rules);
+    // the same rules on both: once
+    page(`<form><input id="p1" type="password" passwordrules="maxlength: 8">
+            <input id="p2" type="password" passwordrules=" maxlength: 8"></form>`);
+    expect(newPasswordRules(input("#p2"))).toEqual({ passwordRules: ["maxlength: 8"] });
+    page(`<form><input id="p1" type="password"></form>`);
+    expect(newPasswordRules(input("#p1"))).toEqual({});
   });
 
   it("never touches the current password on a change-password form", () => {

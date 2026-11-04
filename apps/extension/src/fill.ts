@@ -1,4 +1,5 @@
 import { isNewPasswordField, isOneTimeCodeField, mayTakeNewPassword, oneTimeCodeGroup } from "./autofill/fields.ts";
+import type { FieldRules } from "./passwords/generate.ts";
 
 // fillCredentials runs inside the page: injected by scripting.executeScript (popup) or called by the
 // autofill content script (inline menu), so it must not reference anything outside its own body.
@@ -81,13 +82,36 @@ export function fillCredentials(
 export function fillNewPassword(expectedOrigin: string, password: string, anchor: HTMLInputElement): FillResult {
   if (window.location.origin !== expectedOrigin) return "origin-mismatch";
   if (!anchor.isConnected || !mayTakeNewPassword(anchor)) return "no-fields";
-  const scope = anchor.form ?? document;
-  const targets = Array.from(scope.querySelectorAll("input")).filter(
-    (el) => el === anchor || (isNewPasswordField(el) && isFillable(el)),
-  );
-  for (const el of targets) setInputValue(el, password);
+  for (const el of newPasswordTargets(anchor)) setInputValue(el, password);
   anchor.focus();
   return "filled";
+}
+
+/** The fields a new password goes into: the one the menu is on, and the others of its form (a confirmation). */
+export function newPasswordTargets(anchor: HTMLInputElement): HTMLInputElement[] {
+  const scope = anchor.form ?? document;
+  return Array.from(scope.querySelectorAll("input")).filter(
+    (el) => el === anchor || (isNewPasswordField(el) && isFillable(el)),
+  );
+}
+
+/**
+ * The limits a new password must meet in every field it goes into, whichever the menu is on:
+ * sites often state them on the first field only. The strictest length wins, and the password
+ * must meet each field's `passwordrules` (see parseRules).
+ */
+export function newPasswordRules(anchor: HTMLInputElement): FieldRules {
+  const fields = newPasswordTargets(anchor);
+  const minLengths = fields.map((el) => el.minLength).filter((n) => n > 0);
+  const maxLengths = fields.map((el) => el.maxLength).filter((n) => n > 0);
+  const passwordRules = [...new Set(fields.map((el) => el.getAttribute("passwordrules")?.trim() ?? ""))].filter(
+    Boolean,
+  );
+  return {
+    ...(minLengths.length ? { minLength: Math.max(...minLengths) } : {}),
+    ...(maxLengths.length ? { maxLength: Math.min(...maxLengths) } : {}),
+    ...(passwordRules.length ? { passwordRules } : {}),
+  };
 }
 
 /** Fills an email address into the field the menu was opened on (email fields). */
