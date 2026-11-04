@@ -5,7 +5,7 @@
 import type { FieldKind } from "./fields.ts";
 import { isMenuGenuinelyVisible, VisibilityWatch } from "./visibility.ts";
 
-/** "generated": the field holds a strong password we filled in (and saved, unless "-unsaved"). */
+/** "generated": the field holds a password we generated and filled in (and saved, unless "-unsaved"). */
 export type MenuMode =
   | "logins"
   | "generate"
@@ -125,8 +125,15 @@ export class MenuHost {
   /**
    * `nonce` comes from the background, which accepts requests from this menu only with it.
    * `orGenerate`: with no saved logins, suggest a strong password instead (a field that may be a sign-up's).
+   * `weaker`: the password in "generated" modes is weaker than usual, held back by the site's rules.
    */
-  open(anchor: HTMLInputElement, mode: MenuMode, kind: FieldKind, nonce: string, orGenerate = false): void {
+  open(
+    anchor: HTMLInputElement,
+    mode: MenuMode,
+    kind: FieldKind,
+    nonce: string,
+    { orGenerate = false, weaker = false }: { orGenerate?: boolean; weaker?: boolean } = {},
+  ): void {
     this.#anchor = anchor;
     this.#nonce = nonce;
     this.#height = 48;
@@ -142,6 +149,7 @@ export class MenuHost {
     const field = anchor.type === "password" ? "password" : "username";
     const params = new URLSearchParams({ nonce: this.#nonce, mode, kind, field });
     if (orGenerate) params.set("orGenerate", "1");
+    if (weaker) params.set("weaker", "1");
     this.#frame = createFrame(`${this.menuUrl}#${params}`);
     this.#shadow.replaceChildren(this.#frame);
     if (!this.#host.isConnected) document.documentElement.append(this.#host);

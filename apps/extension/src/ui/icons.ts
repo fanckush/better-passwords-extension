@@ -33,3 +33,6 @@ export const OPEN =
 /** A stopwatch: verification codes. */
 export const TIMER =
   "M9.75 1.75h4.5a.75.75 0 0 1 0 1.5h-4.5a.75.75 0 0 1 0-1.5ZM11.25 3.25h1.5v2h-1.5ZM12 5.25a8.25 8.25 0 1 1 0 16.5 8.25 8.25 0 0 1 0-16.5Zm0 1.75a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM12 9a.75.75 0 0 1 .75.75v3.75a.75.75 0 0 1-1.5 0V9.75A.75.75 0 0 1 12 9Z";
+/** A warning triangle: a suggested password the site's rules made weaker than usual. */
+export const WARNING =
+  "M10.27 3.5a2 2 0 0 1 3.46 0l8.2 14.25a2 2 0 0 1-1.73 3H3.8a2 2 0 0 1-1.73-3L10.27 3.5ZM11.1 8.5h1.8l-.3 6h-1.2l-.3-6Zm.9 7.5a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2Z";

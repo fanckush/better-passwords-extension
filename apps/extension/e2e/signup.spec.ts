@@ -57,6 +57,64 @@ async function expectNoSave(page: Page, helperSaves: () => unknown[]) {
 
 const create = (page: Page) => page.getByRole("button", { name: "Create account" }).click();
 
+/** Opens the sign-up page with these attributes on its new password field. */
+async function signupWith(page: Page, siteUrl: string, attributes: Record<string, string>) {
+  await page.goto(`${siteUrl}/signup.html`);
+  await page.locator("#new").evaluate((field, attrs) => {
+    for (const [name, value] of Object.entries(attrs)) field.setAttribute(name, value);
+  }, attributes);
+}
+
+test("suggests nothing when the site's rules leave no password worth suggesting", async ({
+  context,
+  siteUrl,
+  helperSaves,
+}) => {
+  const page = await context.newPage();
+  await signupWith(page, siteUrl, { maxlength: "1" });
+  const menu = await unlockedMenu(page);
+  await expect(
+    menu.getByText("No suggestion. This site limits passwords to 1 character, which anyone could guess."),
+  ).toBeVisible();
+  await expect(menu.locator(".password")).toHaveCount(0);
+  await expect(page.locator("#new")).toHaveValue("");
+  expect(helperSaves()).toEqual([]);
+});
+
+test("says why a password the site's rules held back is weaker, and still fills it", async ({ context, siteUrl }) => {
+  const page = await context.newPage();
+  await signupWith(page, siteUrl, { maxlength: "8" });
+  const menu = await unlockedMenu(page);
+  await expect(menu.getByText("Suggested Password", { exact: true })).toBeVisible();
+  await expect(menu.getByText("Strong Password", { exact: true })).toHaveCount(0);
+  // the site takes special characters: the alternative without them is there, every time
+  await expect(menu.getByText("Without Special Characters", { exact: true })).toBeVisible();
+  // short: none of it shows until the eye is hovered
+  await expect(menu.locator(".password").first()).toHaveText("••••••••");
+  // the badge explains, without choosing the password
+  // (each of the two suggestions has its note: the first one's)
+  const why = menu.getByText("This site limits passwords to 8 characters.", { exact: true }).first();
+  await expect(why).toBeHidden();
+  await menu.waitForTimeout(500);
+  await menu.locator(".badge").first().click();
+  await expect(why).toBeVisible();
+  await expect(page.locator("#new")).toHaveValue("");
+  await choose(menu, "Suggested Password");
+  await expect(page.locator("#new")).toHaveValue(/^.{8}$/);
+});
+
+test("offers no alternative without special characters when the site requires one", async ({ context, siteUrl }) => {
+  const page = await context.newPage();
+  await signupWith(page, siteUrl, {
+    passwordrules: "required: lower; required: upper; required: digit; required: [!#]; minlength: 24",
+  });
+  const menu = await unlockedMenu(page);
+  await expect(menu.getByText("Strong Password", { exact: true })).toBeVisible();
+  await expect(menu.getByText("Without Special Characters", { exact: true })).toHaveCount(0);
+  await choose(menu, "Strong Password");
+  await expect(page.locator("#new")).toHaveValue(/[!#]/);
+});
+
 test("fills a strong password at once and saves it once the sign-up goes through", async ({
   context,
   siteUrl,

@@ -25,7 +25,12 @@ import {
   type Status,
 } from "@/src/messages.ts";
 import { PortTransport } from "@/src/native/port-transport.ts";
-import { generatePassword } from "@/src/passwords/generate.ts";
+import {
+  allowsSpecialCharacters,
+  generatePassword,
+  PasswordRulesError,
+  type Suggestion,
+} from "@/src/passwords/generate.ts";
 import { oneTimeCodeId, oneTimeCodeViews } from "@/src/passwords/one-time-codes.ts";
 import { waitForLogin } from "@/src/passwords/wait-for-login.ts";
 import { Session } from "@/src/session/session.ts";
@@ -404,14 +409,14 @@ export default defineBackground(() => {
   async function fillGenerated(
     tabId: number,
     nonce: string,
-    password: string,
+    { password, strength }: Suggestion,
     account: string | undefined,
   ): Promise<NewPasswordResult> {
     const context = await newPasswordContext(tabId, nonce);
     if (!context.visible) return "menu-hidden";
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
-    const fill = { type: "menu-fill-new-password", nonce, origin: url.origin, password } as const;
+    const fill = { type: "menu-fill-new-password", nonce, origin: url.origin, password, strength } as const;
     const reply = (await relay(tabId, fill).catch(() => undefined)) as { result: NewPasswordResult } | undefined;
     const result = reply?.result ?? "no-fields";
     if (result !== "filled") return result;
@@ -792,19 +797,33 @@ export default defineBackground(() => {
         // a sign-up's empty email field is the user's to fill
         const guess = !context.username && !context.asksForUsername && url;
         const account = guess ? await accountFor(url.hostname).catch(() => undefined) : undefined;
-        const passwords: GeneratedPasswords = {
-          strong: generatePassword("strong", context.rules),
-          alphanumeric: generatePassword("alphanumeric", context.rules),
-          ...(account ? { account } : {}),
-        };
+        const { rules } = context;
+        let strong: Suggestion;
+        try {
+          strong = generatePassword("strong", rules);
+        } catch (error) {
+          if (error instanceof PasswordRulesError) return { unavailable: error.message };
+          throw error;
+        }
+        const passwords: GeneratedPasswords = { strong, ...(account ? { account } : {}) };
+        // an alternative only when it can differ: a site's digits-only PIN is offered once
+        if (allowsSpecialCharacters(rules)) {
+          try {
+            passwords.alphanumeric = generatePassword("alphanumeric", rules);
+          } catch (error) {
+            // the site needs a special character: an alternative without would be turned down
+            if (!(error instanceof PasswordRulesError)) throw error;
+          }
+        }
         generatedForMenu.set(`${tabId}:${request.nonce}`, passwords);
         return passwords;
       }
       case "use-generated-password": {
         const tabId = tabOf(caller);
         const passwords = generatedForMenu.get(`${tabId}:${request.nonce}`);
-        if (!passwords) throw new Error("That password expired. Try again.");
-        return { result: await fillGenerated(tabId, request.nonce, passwords[request.style], passwords.account) };
+        const chosen = passwords?.[request.style];
+        if (!passwords || !chosen) throw new Error("That password expired. Try again.");
+        return { result: await fillGenerated(tabId, request.nonce, chosen, passwords.account) };
       }
       case "unconfirmed-passwords": {
         const url = await tabUrl(tabOf(caller, request.tabId));

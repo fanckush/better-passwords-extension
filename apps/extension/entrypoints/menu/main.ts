@@ -1,13 +1,27 @@
 import "./style.css";
 import { DISPLAY_NAME } from "@/src/config.ts";
 import { requestHideMyEmailConsent } from "@/src/icloud/consent.ts";
-import type { EmailSuggestions, GeneratedPasswords, MenuMessage, OneTimeCodeView } from "@/src/messages.ts";
+import type { EmailSuggestions, MenuMessage, OneTimeCodeView } from "@/src/messages.ts";
 import { bindToMenu, send } from "@/src/messages.ts";
+import type { Suggestion } from "@/src/passwords/generate.ts";
 import { applySystemAccent } from "@/src/ui/accent.ts";
 import { bindCodeInput } from "@/src/ui/code-input.ts";
 import { companionPitch } from "@/src/ui/companion-pitch.ts";
 import { h } from "@/src/ui/h.ts";
-import { CANCEL, CHECK, ENVELOPE, EYE, icon, KEY, LOCK, OPEN, PERSON, REFRESH, TIMER } from "@/src/ui/icons.ts";
+import {
+  CANCEL,
+  CHECK,
+  ENVELOPE,
+  EYE,
+  icon,
+  KEY,
+  LOCK,
+  OPEN,
+  PERSON,
+  REFRESH,
+  TIMER,
+  WARNING,
+} from "@/src/ui/icons.ts";
 
 // The inline menu, shown in an iframe under a login field. It is an extension page, so the web
 // page can't read the usernames shown here or listen to keys typed into the code field.
@@ -27,6 +41,8 @@ const onPasswordField = params.get("field") === "password";
 /** A password field that may be a sign-up's: with no saved logins, suggest a strong password. */
 const orGenerate = params.get("orGenerate") === "1";
 const mode = params.get("mode");
+/** The generated password in the field ("generated" modes) is weaker than usual: the site's rules. */
+const weaker = params.get("weaker") === "1";
 const panel = document.getElementById("menu") as HTMLElement;
 
 // --- clickjacking guard ------------------------------------------------------------------------
@@ -283,25 +299,42 @@ browser.runtime.onMessage.addListener((request: MenuMessage, sender) => {
 
 async function showGenerate(error?: string) {
   view = "unlocked";
-  let passwords: GeneratedPasswords;
+  let passwords: Awaited<ReturnType<typeof send<{ type: "generate-passwords"; nonce: string }>>>;
   try {
     passwords = await send({ type: "generate-passwords", nonce });
   } catch (e) {
     return render(message(messageOf(e), true));
   }
+  // the site's rules leave nothing worth suggesting: say so quietly, the user types their own
+  if ("unavailable" in passwords) {
+    return render(
+      message(`No suggestion. ${passwords.unavailable}`),
+      h("hr", { class: "separator" }),
+      openPasswordsRow(false),
+    );
+  }
+  const { strong, alphanumeric } = passwords;
   render(
     // a form that doesn't say whose password this is (a reset): say who we'll save it for
     passwords.account ? message(`For ${passwords.account}`) : null,
-    passwordRow("Strong Password", passwords.strong, () => void useGenerated("strong")),
-    passwordRow("Without Special Characters", passwords.alphanumeric, () => void useGenerated("alphanumeric")),
+    ...passwordRow(
+      strong.strength === "strong" ? "Strong Password" : "Suggested Password",
+      strong,
+      () => void useGenerated("strong"),
+    ),
+    ...(alphanumeric
+      ? passwordRow("Without Special Characters", alphanumeric, () => void useGenerated("alphanumeric"))
+      : []),
     error ? message(error, true) : null,
     h("hr", { class: "separator" }),
     openPasswordsRow(false),
   );
 }
 
-/** Shows the first characters only (and the hyphens), so a shared screen doesn't give it away. */
-function masked(password: string): string {
+/** Shows the first characters only (and the hyphens), so a shared screen doesn't give it away; nothing of a weaker one. */
+function masked(password: string, strength: Suggestion["strength"]): string {
+  // a short password held back by the site's rules: any character shown would give too much away
+  if (strength !== "strong") return "•".repeat(password.length);
   return [...password].map((c, i) => (i < 3 || c === "-" ? c : "•")).join("");
 }
 
@@ -309,8 +342,8 @@ function masked(password: string): string {
  * A generated password, partly hidden. Hovering the eye shows it. The eye sits inside the row,
  * so a click on it is a click on the row.
  */
-function passwordRow(title: string, password: string, onChoose: () => void): HTMLElement {
-  const choice = row(KEY, title, masked(password), onChoose, "detail password");
+function passwordRow(title: string, { password, strength, limit }: Suggestion, onChoose: () => void): HTMLElement[] {
+  const choice = row(KEY, title, masked(password, strength), onChoose, "detail password");
   const detail = choice.querySelector(".password") as HTMLElement;
   const eye = h("span", { class: "reveal", title: "Show password" }, icon(EYE));
   // every move over the eye shows it (sturdier than relying on a single enter event)
@@ -318,11 +351,31 @@ function passwordRow(title: string, password: string, onChoose: () => void): HTM
     if (detail.textContent !== password) detail.textContent = password;
   });
   eye.addEventListener("pointerleave", () => {
-    detail.textContent = masked(password);
+    detail.textContent = masked(password, strength);
   });
-  choice.append(eye);
-  return choice;
+  if (strength === "strong") {
+    choice.append(eye);
+    return [choice];
+  }
+  // weaker than usual because of the site's rules: a badge says why, on hover or click
+  const why = limit ?? "This site's requirements make it weaker than usual.";
+  const note = h("div", { class: "message", textContent: why, id: `why-${++notes}`, hidden: true });
+  choice.setAttribute("aria-describedby", note.id);
+  const badge = h("span", { class: `badge ${strength}`, title: why }, icon(WARNING));
+  badge.setAttribute("role", "button");
+  badge.setAttribute("aria-label", "Why this password is weaker");
+  badge.addEventListener("click", (event) => {
+    // the badge sits inside the row: don't let the click choose the row
+    event.stopPropagation();
+    note.hidden = !note.hidden;
+    reportSize();
+  });
+  choice.append(badge, eye);
+  return [choice, note];
 }
+
+/** Numbers the notes under password rows, for aria-describedby. */
+let notes = 0;
 
 /** Fills the password in now; Apple Passwords asks to save it when the form is submitted. */
 async function useGenerated(style: "strong" | "alphanumeric") {
@@ -340,12 +393,17 @@ async function useGenerated(style: "strong" | "alphanumeric") {
   }
 }
 
-/** The field already holds a strong password we generated. */
+/** The field already holds a password we generated. */
 function showGeneratedDone(saved: boolean) {
   render(
     saved
-      ? row(CHECK, "Strong Password Saved", "In Apple Passwords", () => close())
-      : row(KEY, "Strong Password", "You'll be asked to save it when you continue", () => close()),
+      ? row(CHECK, weaker ? "Password Saved" : "Strong Password Saved", "In Apple Passwords", () => close())
+      : row(
+          KEY,
+          weaker ? "Suggested Password" : "Strong Password",
+          "You'll be asked to save it when you continue",
+          () => close(),
+        ),
     row(KEY, "Choose a Different Password", "", () => void showGenerate()),
     h("hr", { class: "separator" }),
     openPasswordsRow(false),

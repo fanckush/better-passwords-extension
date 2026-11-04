@@ -78,7 +78,7 @@ The inline menu fills the same way, through the content script.
 
 ## New passwords (sign-up and change-password forms)
 
-Password fields on sign-up and change-password forms get a menu with two generated passwords: Apple's style (`xxxxxx-xxxxxx-xxxxxx`) and one without special characters. Both follow the field's `minlength`, `maxlength` and `passwordrules`. They are generated in the background worker, and shown masked until the user hovers the eye.
+Password fields on sign-up and change-password forms get a menu with two generated passwords: Apple's style (`xxxxxx-xxxxxx-xxxxxx`) and one without special characters. Both follow the field's `minlength`, `maxlength` and `passwordrules`. When those limits make a password weaker than usual (a short `maxlength`, digits only), it's still offered, since anything the user makes up instead would be weaker: it's called Suggested Password, with a yellow or red badge that says which rule held it back (`src/passwords/generate.ts` counts how many passwords the rules leave). Only rules no password can meet, or that leave too few passwords to keep one secret, get no suggestion, and the menu says so in one line. The alternative without special characters is left out when the site requires one. They are generated in the background worker, and shown masked until the user hovers the eye.
 
 Like Safari, the chosen password is filled right away, and Apple Passwords is asked to save it once the page moves on with it. Apple's helper shows macOS's "Save password?" prompt but never reports the outcome, so the background then looks the login up until it appears.
 

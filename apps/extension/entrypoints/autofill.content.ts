@@ -59,7 +59,9 @@ export default defineContentScript({
     // new-password fields by menu nonce: a save can outlast the menu (macOS asks the user first)
     const newPasswordFields = new Map<string, HTMLInputElement>();
     // the last generated password we filled: to recognise it, and to save it once the form is sent
-    let generated: { field: HTMLInputElement; value: string; saved: boolean; username: string } | undefined;
+    let generated:
+      | { field: HTMLInputElement; value: string; saved: boolean; username: string; weaker: boolean }
+      | undefined;
 
     async function offer(field: HTMLInputElement, kind: FieldKind) {
       if (menu.anchor === field || dismissed === field || dismissedCode.has(field) || fillingCode) return;
@@ -79,7 +81,9 @@ export default defineContentScript({
       } else if ((kind === "new-password" || (unsure && field === generated?.field)) && field.value !== "") {
         // our own password: say it's saved; one the user typed: stay out of the way
         if (show !== "none" && generated?.field.form === field.form && field.value === generated.value) {
-          menu.open(field, generated.saved ? "generated" : "generated-unsaved", kind, nonce);
+          menu.open(field, generated.saved ? "generated" : "generated-unsaved", kind, nonce, {
+            weaker: generated.weaker,
+          });
         } else {
           menu.close();
         }
@@ -90,7 +94,7 @@ export default defineContentScript({
       } else if (show === "logins" || show === "generate" || show === "locked" || show === "setup") {
         // "locked" and "setup" too: login fields include guessed usernames, but only next to a
         // password field, and the email field is usually the first one people click
-        menu.open(field, show, kind, nonce, orGenerate);
+        menu.open(field, show, kind, nonce, { orGenerate: orGenerate ?? false });
       } else {
         menu.close();
       }
@@ -304,7 +308,13 @@ export default defineContentScript({
         }
         const result = fillNewPassword(message.origin, message.password, field);
         if (result === "filled") {
-          generated = { field, value: message.password, saved: false, username: "" };
+          generated = {
+            field,
+            value: message.password,
+            saved: false,
+            username: "",
+            weaker: message.strength !== "strong",
+          };
           trackUsername();
           watchGenerated(field);
         }

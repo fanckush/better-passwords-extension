@@ -15,6 +15,7 @@
   --accent: #0a84ff;
   --accent-text: #ffffff;
   --danger: #d70015;
+  --warning: #c27c00;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -26,5 +27,6 @@
     --separator: rgb(255 255 255 / 12%);
     --hover: rgb(255 255 255 / 7%);
     --danger: #ff453a;
+    --warning: #ffb340;
   }
 }

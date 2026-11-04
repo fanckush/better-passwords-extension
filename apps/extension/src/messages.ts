@@ -3,7 +3,7 @@
 
 import type { FieldKind } from "./autofill/fields.ts";
 import type { CompanionState, CompanionUpdate } from "./companion.ts";
-import type { FieldRules, PasswordStyle } from "./passwords/generate.ts";
+import type { FieldRules, PasswordStyle, Strength, Suggestion } from "./passwords/generate.ts";
 import type { SessionStatus } from "./session/session.ts";
 
 export type Request =
@@ -32,7 +32,7 @@ export type Request =
   | { type: "menu-resize"; nonce: string; height: number }
   | { type: "menu-close"; nonce: string }
   | { type: "menu-focus-field"; nonce: string }
-  /** Two fresh strong passwords for the new-password field the menu was opened on. */
+  /** Fresh passwords for the new-password field the menu was opened on, as strong as its rules allow. */
   | { type: "generate-passwords"; nonce: string }
   /** Fills the chosen password; Apple Passwords is asked to save it when the form is submitted. */
   | { type: "use-generated-password"; nonce: string; style: PasswordStyle }
@@ -174,8 +174,9 @@ export interface AutofillStatus {
 }
 
 export interface GeneratedPasswords {
-  strong: string;
-  alphanumeric: string;
+  strong: Suggestion;
+  /** Left out when the site's rules need a special character, or the strong one has none anyway. */
+  alphanumeric?: Suggestion;
   /**
    * The account they'd be saved for when the form has no username (a password reset): the login
    * just chosen on this site, or its only one. macOS's save prompt has the final say.
@@ -226,7 +227,8 @@ interface Responses {
   "get-settings": Settings;
   "set-settings": Settings;
   "autofill-status": AutofillStatus;
-  "generate-passwords": GeneratedPasswords;
+  /** `unavailable`: why the site's rules leave nothing worth suggesting. */
+  "generate-passwords": GeneratedPasswords | { unavailable: string };
   "use-generated-password": { result: NewPasswordResult };
   "unconfirmed-passwords": { username: string; password: string }[];
   "email-suggestions": EmailSuggestions;
@@ -266,7 +268,7 @@ export type ContentMessage =
   /** What the background needs before saving: the field's rules, the username, and whether the menu is visible. */
   | { type: "menu-new-password-context"; nonce: string }
   /** Fills a password that Apple Passwords has saved. */
-  | { type: "menu-fill-new-password"; nonce: string; origin: string; password: string }
+  | { type: "menu-fill-new-password"; nonce: string; origin: string; password: string; strength: Strength }
   /** Fills an email address into the field the menu was opened on. */
   | { type: "menu-fill-email"; nonce: string; origin: string; email: string }
   /** Whether the menu is (still) visible: asked before Touch ID, so a hidden menu never prompts. */

@@ -165,7 +165,8 @@ body {
 }
 
 .row .reveal svg,
-.row .dismiss svg {
+.row .dismiss svg,
+.row .badge svg {
   width: 16px;
   height: 16px;
 }
@@ -260,4 +261,38 @@ body {
   width: 12px;
   height: 12px;
   fill: currentColor;
+}
+
+/* a suggested password the site's rules made weaker: next to the eye, its colour kept on hover */
+.badge {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.badge + .reveal {
+  margin-left: 0;
+}
+
+.row .badge.fair svg {
+  color: var(--warning);
+}
+
+.row .badge.weak svg {
+  color: var(--danger);
+}
+
+.badge:hover {
+  background: rgb(255 255 255 / 20%);
+}
+
+/* like the other icons, white on a highlighted row, as macOS does with coloured symbols */
+.row:hover .badge svg,
+.row:focus-visible .badge svg {
+  color: inherit;
 }
