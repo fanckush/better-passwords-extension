@@ -32,6 +32,7 @@ import {
   type Suggestion,
 } from "@/src/passwords/generate.ts";
 import { oneTimeCodeId, oneTimeCodeViews } from "@/src/passwords/one-time-codes.ts";
+import { withSiteRules } from "@/src/passwords/site-rules.ts";
 import { waitForLogin } from "@/src/passwords/wait-for-login.ts";
 import { Session } from "@/src/session/session.ts";
 import { toolbarAction } from "@/src/toolbar.ts";
@@ -797,7 +798,8 @@ export default defineBackground(() => {
         // a sign-up's empty email field is the user's to fill
         const guess = !context.username && !context.asksForUsername && url;
         const account = guess ? await accountFor(url.hostname).catch(() => undefined) : undefined;
-        const { rules } = context;
+        // sites that don't state their rules in HTML: Apple's list of known ones
+        const rules = url ? withSiteRules(context.rules, url.hostname) : context.rules;
         let strong: Suggestion;
         try {
           strong = generatePassword("strong", rules);

@@ -28,5 +28,12 @@ The companion app in apps/companion includes Sparkle, for updates, under the MIT
   Copyright (c) 2006-2013 Andy Matuschak and the Sparkle contributors
   https://github.com/sparkle-project/Sparkle
 
+The password rules in apps/extension/src/passwords/site-rules.json are Apple's list of known
+website password requirements, under the MIT license:
+
+  Password Manager Resources
+  Copyright 2020 - 2026 Apple Inc.
+  https://github.com/apple/password-manager-resources
+
 Apple, iCloud and Apple Passwords are trademarks of Apple Inc. This project is not
 affiliated with or endorsed by Apple Inc.

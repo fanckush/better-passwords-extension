@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/.output", "!**/.wxt", "!**/*.svg"]
+    "includes": ["**", "!**/.output", "!**/.wxt", "!**/*.svg", "!apps/extension/src/passwords/site-rules.json"]
   },
   "formatter": {
     "indentStyle": "space",
