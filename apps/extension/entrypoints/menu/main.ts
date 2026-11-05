@@ -4,6 +4,7 @@ import { requestHideMyEmailConsent } from "@/src/icloud/consent.ts";
 import type { EmailSuggestions, MenuMessage, OneTimeCodeView } from "@/src/messages.ts";
 import { bindToMenu, send } from "@/src/messages.ts";
 import type { Suggestion } from "@/src/passwords/generate.ts";
+import { computerName, platform } from "@/src/platform.ts";
 import { applySystemAccent } from "@/src/ui/accent.ts";
 import { bindCodeInput } from "@/src/ui/code-input.ts";
 import { companionPitch } from "@/src/ui/companion-pitch.ts";
@@ -46,6 +47,16 @@ const withLogins = params.get("logins") === "1";
 /** The generated password in the field ("generated" modes) is weaker than usual: the site's rules. */
 const weaker = params.get("weaker") === "1";
 const panel = document.getElementById("menu") as HTMLElement;
+/** "Mac" or "PC": the computer showing Apple's code. Known long before a code is asked for. */
+let computer = "Mac";
+/** What's shown while a verification code is fetched: macOS asks for Touch ID, Windows nothing. */
+let fetchingCode = "Confirm with Touch ID…";
+void platform().then((os) => {
+  computer = computerName(os);
+  if (os === "windows") fetchingCode = "Getting the code…";
+});
+/** A verification code is being fetched: its rows stay on screen, not redrawn. */
+let fillingCode = false;
 
 // --- clickjacking guard ------------------------------------------------------------------------
 // Where the browser supports IntersectionObserver v2, it reports whether this frame is actually
@@ -249,15 +260,18 @@ function renderCodes(note = codesView?.note, isError = true) {
 async function fillCode(code: OneTimeCodeView) {
   // macOS asks for Touch ID before Apple Passwords gives the code; the rows stay, to choose again
   const focusedIndex = Array.from(panel.querySelectorAll(".row")).indexOf(document.activeElement as Element);
-  renderCodes("Confirm with Touch ID…", false);
+  fillingCode = true;
+  renderCodes(fetchingCode, false);
   panel.querySelectorAll<HTMLElement>(".row")[Math.max(focusedIndex, 0)]?.focus();
   try {
     const { result } = await send({ type: "fill-one-time-code-from-menu", nonce, id: code.id });
+    fillingCode = false;
     // when filled, the content script closes the menu
     if (result !== "filled") await showCodes(fillError(result));
   } catch (e) {
     // chosen again (say, after dismissing Touch ID): that newer choice carries on
     if ((e as { code?: string }).code === "superseded") return;
+    fillingCode = false;
     await showCodes(messageOf(e));
   }
 }
@@ -294,7 +308,7 @@ browser.runtime.onMessage.addListener((request: MenuMessage, sender) => {
   }
   // a new code arrived (by SMS, say): list them again, unless one is being filled
   if (request.type === "one-time-codes-changed" && kind === "one-time-code" && view === "unlocked") {
-    if (!panel.textContent?.includes("Confirm with Touch ID")) void showCodes();
+    if (!fillingCode) void showCodes();
   }
   return false;
 });
@@ -776,7 +790,7 @@ function showCodeEntry(error?: string) {
     await send({ type: "request-code", fresh: true }).catch((e) => showCodeEntry(messageOf(e)));
     input.focus();
   });
-  render(message("Enter the code shown on your Mac"), input, error ? message(error, true) : null, again);
+  render(message(`Enter the code shown on your ${computer}`), input, error ? message(error, true) : null, again);
   void companionPitch(() => {
     void send({ type: "open-companion-page" }).catch(() => {});
     close();

@@ -38,10 +38,10 @@ body:
     validations:
       required: true
   - type: input
-    id: macos
+    id: os
     attributes:
-      label: macOS version
-      placeholder: "macOS 27.0.1"
+      label: macOS or Windows version
+      placeholder: "macOS 27.0.1, Windows 11…"
     validations:
       required: true
   - type: input

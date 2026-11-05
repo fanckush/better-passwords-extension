@@ -3,8 +3,16 @@
 // which opens on install and from the inline menu.
 
 import "./setup.css";
-import { COMPANION_CONNECT_URL, COMPANION_DOWNLOAD_URL, REPO_URL, SETUP_COMMAND } from "../config.ts";
+import {
+  COMPANION_CONNECT_URL,
+  COMPANION_DOWNLOAD_URL,
+  ICLOUD_FOR_WINDOWS_URL,
+  REPO_URL,
+  SETUP_COMMAND,
+  WINDOWS_SETUP_COMMAND,
+} from "../config.ts";
 import { type Status, send } from "../messages.ts";
+import { computerName, type Platform, platform } from "../platform.ts";
 import { h } from "./h.ts";
 import { CHECK, icon } from "./icons.ts";
 import { browserName, reportProblem } from "./report.ts";
@@ -14,6 +22,8 @@ type Route = "app" | "terminal";
 const ROUTE_KEY = "setupRoute";
 /** How often to look for the connection while the welcome is on screen. */
 const POLL_MS = 1_500;
+/** Where this flow runs, as found by setupFlow: setup differs between a Mac and Windows. */
+let os: Platform = "mac";
 
 export interface SetupAction {
   label: string;
@@ -34,12 +44,16 @@ export interface SetupOptions {
  */
 export async function setupFlow(status: Status, options: SetupOptions): Promise<HTMLElement> {
   const root = h("div", { class: "setup" });
-  const os = await browser.runtime.getPlatformInfo().catch(() => undefined);
-  if (os && os.os !== "mac") {
+  os = await platform();
+  if (os === "other") {
     root.append(
       h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
-      h("h1", { textContent: "Better Passwords needs a Mac" }),
-      h("p", { class: "lead", textContent: "It fills passwords from Apple Passwords, on macOS 14 or later." }),
+      h("h1", { textContent: "Better Passwords needs a Mac or a PC" }),
+      h("p", {
+        class: "lead",
+        textContent:
+          "It fills passwords from Apple Passwords, on macOS 14 or later, or on Windows with iCloud for Windows.",
+      }),
     );
     return root;
   }
@@ -121,7 +135,9 @@ function showWelcome(root: HTMLElement, status: Status, options: SetupOptions) {
 
   function switchTo(next: Route) {
     view = next;
-    route.replaceChildren(...(view === "app" ? appRoute(act, switchTo) : terminalRoute(act, switchTo)));
+    // Windows has no companion app: its one route is the PowerShell command
+    if (os === "windows") route.replaceChildren(...windowsRoute(act));
+    else route.replaceChildren(...(view === "app" ? appRoute(act, switchTo) : terminalRoute(act, switchTo)));
   }
   switchTo(view);
   waiting.hidden = acted === undefined;
@@ -136,7 +152,7 @@ function showWelcome(root: HTMLElement, status: Status, options: SetupOptions) {
       class: "lead",
       textContent: repair
         ? "This browser's link to Apple Passwords needs repairing. Connect it once more."
-        : "First, connect this browser to Apple Passwords on your Mac.",
+        : `First, connect this browser to Apple Passwords on your ${computerName(os)}.`,
     }),
     route,
     waiting,
@@ -158,6 +174,7 @@ function showWelcome(root: HTMLElement, status: Status, options: SetupOptions) {
  * (the helper's launch constraints). Nothing on our side can change that, so say so plainly.
  */
 async function showBlocked(root: HTMLElement, status: Status, options: SetupOptions) {
+  if (os === "windows") return showHelperMissing(root, status, options);
   // Forks often present themselves as Chrome (Ardia does), and Chrome itself is one Apple allows, so
   // a blocked "Google Chrome" or "Chromium" is some other browser
   const name = await browserName();
@@ -181,13 +198,33 @@ async function showBlocked(root: HTMLElement, status: Status, options: SetupOpti
   );
 }
 
+/**
+ * Windows doesn't block browsers. Set up, but the helper quits as it starts: iCloud for Windows was
+ * removed, or its helper alias was turned off.
+ */
+function showHelperMissing(root: HTMLElement, status: Status, options: SetupOptions) {
+  show(
+    root,
+    h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
+    h("h1", { textContent: "Apple's password helper didn't start" }),
+    h("p", {
+      class: "lead",
+      textContent: "It comes with iCloud for Windows. Check that it's installed and signed in.",
+    }),
+    h("p", { class: "note" }, "Need it? ", storeLink("Get iCloud for Windows")),
+    retryRoute(root, status, options, "It still didn't start. Restarting the browser usually helps."),
+    details(status.error),
+    reportProblem(),
+  );
+}
+
 /** Set up, but the helper didn't answer for some other reason (it usually does next time). */
 function showUnreachable(root: HTMLElement, status: Status, options: SetupOptions) {
   show(
     root,
     h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
     h("h1", { textContent: "Couldn't reach Apple Passwords" }),
-    h("p", { class: "lead", textContent: "Apple's password helper on your Mac didn't answer." }),
+    h("p", { class: "lead", textContent: `Apple's password helper on your ${computerName(os)} didn't answer.` }),
     retryRoute(root, status, options, "Still no answer. Restarting the browser usually helps."),
     details(status.error),
     reportProblem(),
@@ -296,6 +333,44 @@ function terminalRoute(act: (route: Route) => void, switchTo: (route: Route) => 
   ];
 }
 
+/** The setup on Windows: iCloud for Windows, then one PowerShell command. */
+function windowsRoute(act: (route: Route) => void): Node[] {
+  const copy = h("button", { class: "button primary", type: "button", textContent: "Copy PowerShell Command" });
+  // shown only if copying fails, to select by hand
+  const command = h("code", { class: "command", textContent: WINDOWS_SETUP_COMMAND });
+  command.hidden = true;
+  copy.addEventListener("click", async () => {
+    act("terminal");
+    try {
+      await navigator.clipboard.writeText(WINDOWS_SETUP_COMMAND);
+      copy.textContent = "Copied";
+    } catch {
+      command.hidden = false;
+      getSelection()?.selectAllChildren(command);
+    }
+  });
+  return [
+    h("p", { class: "note" }, "You need ", storeLink("iCloud for Windows"), ", signed in with Passwords turned on."),
+    copy,
+    command,
+    h("p", { class: "note", textContent: "Then paste it into PowerShell and press Enter." }),
+    h(
+      "p",
+      { class: "links" },
+      h("a", {
+        href: `${REPO_URL}/blob/main/scripts/setup-windows.ps1`,
+        target: "_blank",
+        rel: "noopener",
+        textContent: "Read the script",
+      }),
+    ),
+  ];
+}
+
+function storeLink(text: string) {
+  return h("a", { href: ICLOUD_FOR_WINDOWS_URL, target: "_blank", rel: "noopener", textContent: text });
+}
+
 function showConnected(root: HTMLElement, options: SetupOptions) {
   void send({ type: "setup-seen" }).catch(() => {});
   forgetRoute();
@@ -305,7 +380,7 @@ function showConnected(root: HTMLElement, options: SetupOptions) {
     root,
     h("div", { class: "badge" }, icon(CHECK)),
     h("h1", { textContent: "You're connected" }),
-    h("p", { class: "lead", textContent: "Next, unlock with the code your Mac shows." }),
+    h("p", { class: "lead", textContent: `Next, unlock with the code your ${computerName(os)} shows.` }),
     h(
       "div",
       { class: "route" },

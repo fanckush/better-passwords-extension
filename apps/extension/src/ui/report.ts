@@ -9,7 +9,8 @@ import { h } from "./h.ts";
 export interface ReportDetails {
   version?: string;
   browser?: string;
-  macos?: string;
+  /** The operating system and its version, as in "macOS 26.1.0" or "Windows 11". */
+  os?: string;
 }
 
 const WARNING = "Please never include passwords, pairing codes or screenshots showing them.";
@@ -22,7 +23,7 @@ export function reportLinks(details: ReportDetails): { github: string; email: st
   const lines = [
     ["Extension version", details.version],
     ["Browser", details.browser],
-    ["macOS", details.macos],
+    ["System", details.os],
   ]
     .filter(([, value]) => value)
     .map(([label, value]) => `${label}: ${value}`);
@@ -67,7 +68,11 @@ export async function reportDetails(): Promise<ReportDetails> {
     const brand =
       brands.find((b) => !/not.a.brand|^chromium$/i.test(b.brand)) ?? brands.find((b) => b.brand === "Chromium");
     if (brand) details.browser = `${brand.brand} ${brand.version}`;
-    if (values?.platform === "macOS" && values.platformVersion) details.macos = values.platformVersion;
+    if (values?.platform === "macOS" && values.platformVersion) details.os = `macOS ${values.platformVersion}`;
+    // Windows reports 13 and up for Windows 11, and 1 to 10 for Windows 10
+    if (values?.platform === "Windows" && values.platformVersion) {
+      details.os = Number.parseInt(values.platformVersion, 10) >= 13 ? "Windows 11" : "Windows 10";
+    }
   } catch {
     // left for the user to fill in
   }

@@ -10,7 +10,7 @@ import {
   CONTENT_SCRIPT_REQUESTS,
   type ContactEmailsState,
   type ContentMessage,
-  DEFAULT_SETTINGS,
+  defaultSettings,
   type EmailSuggestions,
   type Envelope,
   type GeneratedPasswords,
@@ -34,6 +34,7 @@ import {
 import { oneTimeCodeId, oneTimeCodeViews } from "@/src/passwords/one-time-codes.ts";
 import { withSiteRules } from "@/src/passwords/site-rules.ts";
 import { waitForLogin } from "@/src/passwords/wait-for-login.ts";
+import { platform } from "@/src/platform.ts";
 import { Session } from "@/src/session/session.ts";
 import { toolbarAction } from "@/src/toolbar.ts";
 import { PendingUpdate } from "@/src/updates.ts";
@@ -89,7 +90,8 @@ export default defineBackground(() => {
       return typeof stored === "string" ? stored : undefined;
     },
   });
-  const companion = new Companion();
+  // the companion app is Mac only; elsewhere it's never asked, nor offered
+  const companion = new Companion(undefined, undefined, async () => (await platform()) === "mac");
 
   // An open native port keeps the worker alive in Chrome 105+; the alarm is a fallback that
   // wakes it if the browser suspends it anyway. Nothing to do on wake: state lives in memory.
@@ -161,17 +163,14 @@ export default defineBackground(() => {
     });
   });
 
-  /** Apple Passwords and its helper exist only on macOS; elsewhere there's nothing to set up. */
-  const onMac = browser.runtime
-    .getPlatformInfo()
-    .then(({ os }) => os === "mac")
-    .catch(() => true);
+  /** Apple's helper comes with macOS and with iCloud for Windows; elsewhere there's nothing to set up. */
+  const supported = platform().then((os) => os !== "other");
 
   // A fresh install that can't reach the helper yet opens the setup page, so nobody has to find
-  // the toolbar button first; so does one in a browser macOS blocks, which explains it. A Mac that
-  // is set up already (a reinstall) sees nothing.
+  // the toolbar button first; so does one whose helper won't start, which explains it. A computer
+  // that is set up already (a reinstall) sees nothing.
   browser.runtime.onInstalled.addListener(async ({ reason }) => {
-    if (reason !== "install" || !(await onMac)) return;
+    if (reason !== "install" || !(await supported)) return;
     await session.connect().catch(() => {});
     if (session.status.state === "no-helper" || session.status.state === "blocked") await openSetupPage();
   });
@@ -315,8 +314,8 @@ export default defineBackground(() => {
         settings.generatePasswords &&
         (settings.hideMyEmail ||
           settings.hideMyEmailHint ||
-          settings.companionEmailsHint ||
-          (await companion.state()) !== "not-installed");
+          (settings.companionEmailsHint && (await companion.state()) !== "unavailable") ||
+          ["ready", "needs-setup"].includes(await companion.state()));
       // a menu with nothing to offer closes itself
       const fills = signIn && settings.inlineMenu && ((await connectedUnlocked()) || canUnlock());
       return { show: suggests || fills ? "email" : "none" };
@@ -329,7 +328,7 @@ export default defineBackground(() => {
       // an unlock button that can't work helps nobody; the toolbar badge and popup explain it
       if (session.status.state === "blocked") return { show: "none" };
       if (session.status.state !== "no-helper") return { show: "locked" };
-      return { show: (await onMac) ? "setup" : "none" };
+      return { show: (await supported) ? "setup" : "none" };
     }
     // saving needs the session, so new passwords are offered only once unlocked
     if (kind === "new-password") return { show: "generate" };
@@ -673,7 +672,9 @@ export default defineBackground(() => {
   }
 
   async function contactEmailsState(settings: Settings): Promise<ContactEmailsState> {
-    if ((await companion.state()) === "not-installed") return { state: settings.companionEmailsHint ? "hint" : "off" };
+    const app = await companion.state();
+    if (app === "unavailable") return { state: "off" };
+    if (app === "not-installed") return { state: settings.companionEmailsHint ? "hint" : "off" };
     if (!settings.suggestEmails) return { state: "off" };
     // the app answers only a browser running Apple's helper (anything else could be a program
     // reading Contacts through it), so make sure ours is: connecting starts it, without pairing
@@ -1096,5 +1097,5 @@ async function tabUrl(tabId: number): Promise<URL | undefined> {
 
 async function getSettings(): Promise<Settings> {
   const { settings } = await browser.storage.local.get("settings");
-  return { ...DEFAULT_SETTINGS, ...(settings as Partial<Settings> | undefined) };
+  return { ...defaultSettings(await platform()), ...(settings as Partial<Settings> | undefined) };
 }

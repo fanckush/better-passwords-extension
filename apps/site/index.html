@@ -42,10 +42,10 @@
       "@id": "https://betterpasswords.app/#app",
       "name": "Better Passwords",
       "url": "https://betterpasswords.app/",
-      "description": "A browser extension that fills logins from Apple Passwords (iCloud Keychain) in Chrome, Edge, Brave, Arc and Firefox on macOS. An open-source alternative to Apple's iCloud Passwords extension: it pairs once per browser session, unlocks with Touch ID through an optional companion Mac app, suggests strong passwords in the field, fills two-factor verification codes saved in Apple Passwords, and offers Hide My Email addresses in sign-up forms.",
+      "description": "A browser extension that fills logins from Apple Passwords (iCloud Keychain) in Chrome, Edge, Brave, Arc and Firefox on macOS and Windows. An open-source alternative to Apple's iCloud Passwords extension: it pairs once per browser session, unlocks with Touch ID through an optional companion Mac app, suggests strong passwords in the field, fills two-factor verification codes saved in Apple Passwords, and offers Hide My Email addresses in sign-up forms.",
       "applicationCategory": "BrowserApplication",
       "applicationSubCategory": "Password manager",
-      "operatingSystem": "macOS 14 or later",
+      "operatingSystem": "macOS 14 or later, Windows 10 or later",
       "browserRequirements": "Chrome, Edge, Brave, Arc or Firefox",
       "featureList": [
         "Fills logins from Apple Passwords (iCloud Keychain)",
@@ -70,13 +70,14 @@
       "@id": "https://betterpasswords.app/#faq",
       "mainEntity": [
         { "@type": "Question", "name": "What is Hide My Email?", "acceptedAnswer": { "@type": "Answer", "text": "An iCloud+ feature that gives each site its own random address that forwards to your inbox. If a site sells or leaks it, you turn that one address off. Safari offers it in sign-up forms; this brings it to Chrome, using your iCloud sign-in in this browser." } },
-        { "@type": "Question", "name": "Is this from Apple?", "acceptedAnswer": { "@type": "Answer", "text": "No. It's an independent, open-source extension that works with the Apple Passwords already on your Mac." } },
-        { "@type": "Question", "name": "Is it safe?", "acceptedAnswer": { "@type": "Answer", "text": "Your passwords stay in Apple Passwords. The extension asks your Mac for the one you pick, fills it, and keeps nothing. There are no accounts, no servers and no tracking, and anyone can read the code." } },
-        { "@type": "Question", "name": "How do I set it up?", "acceptedAnswer": { "@type": "Answer", "text": "Add the extension from your browser's store, then open the companion Mac app. It connects Chrome to Apple Passwords and turns on Touch ID. Unlock once, and turn on Hide My Email from the toolbar if you have iCloud+. Needs macOS 14 (Sonoma) or later." } },
-        { "@type": "Question", "name": "What are the six digits?", "acceptedAnswer": { "@type": "Answer", "text": "When an extension connects to Apple Passwords, your Mac shows a six-digit code and you type it into the browser, to prove the browser is yours. Apple's extension needs a new one whenever Chrome puts it to sleep. This extension keeps the connection open for the browser session. With the optional companion app, Touch ID enters the code for you." } },
+        { "@type": "Question", "name": "Is this from Apple?", "acceptedAnswer": { "@type": "Answer", "text": "No. It's an independent, open-source extension that works with the Apple Passwords already on your Mac or PC." } },
+        { "@type": "Question", "name": "Is it safe?", "acceptedAnswer": { "@type": "Answer", "text": "Your passwords stay in Apple Passwords. The extension asks your computer for the one you pick, fills it, and keeps nothing. There are no accounts, no servers and no tracking, and anyone can read the code." } },
+        { "@type": "Question", "name": "How do I set it up?", "acceptedAnswer": { "@type": "Answer", "text": "Add the extension from your browser's store, then open the companion Mac app. It connects Chrome to Apple Passwords and turns on Touch ID. Unlock once, and turn on Hide My Email from the toolbar if you have iCloud+. Needs macOS 14 (Sonoma) or later. On Windows, the extension shows a one-line setup instead." } },
+        { "@type": "Question", "name": "What are the six digits?", "acceptedAnswer": { "@type": "Answer", "text": "When an extension connects to Apple Passwords, your computer shows a six-digit code and you type it into the browser, to prove the browser is yours. Apple's extension needs a new one whenever Chrome puts it to sleep. This extension keeps the connection open for the browser session. With the optional companion app, Touch ID enters the code for you." } },
         { "@type": "Question", "name": "Do I need the companion app?", "acceptedAnswer": { "@type": "Answer", "text": "It's the easy way, and it's what adds Touch ID and your contact card's emails. Without it, run this once in Terminal: curl -fsSL https://github.com/fanckush/better-passwords-extension/raw/main/scripts/setup-mac.sh | sh" } },
         { "@type": "Question", "name": "Does it cost anything?", "acceptedAnswer": { "@type": "Answer", "text": "No. The extension and the companion app are free. Hide My Email is part of iCloud+, which you pay Apple for." } },
-        { "@type": "Question", "name": "Does it work on Windows?", "acceptedAnswer": { "@type": "Answer", "text": "Not yet. It's Mac only for now, because it works with the Apple Passwords helper built into macOS. If you'd use it on Windows, open an issue to ask for it." } }
+        { "@type": "Question", "name": "Does it work on Windows?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, with iCloud for Windows from the Microsoft Store, signed in with Passwords turned on. Add the extension, then run the setup command it shows in PowerShell. The companion app is Mac only, so on Windows you type the six-digit code once each time you open your browser." } },
+        { "@type": "Question", "name": "Does it work on Linux?", "acceptedAnswer": { "@type": "Answer", "text": "No. Apple's password helper only comes with macOS and with iCloud for Windows, and Better Passwords works through it. There's nothing like it on Linux." } }
       ]
     }
   ]
@@ -205,7 +206,7 @@
       <a class="add big" data-add href="#tour"><svg data-logo aria-hidden="true"></svg><span data-label>Add to Chrome</span></a>
       <a class="other" data-other href="#tour"><svg data-logo aria-hidden="true"></svg><span data-label>Also for Firefox</span></a>
     </div>
-    <p class="note center" data-note>Free and open source. Mac only (macOS 14 or later). Works in Chrome, Edge, Brave, Arc and Firefox.</p>
+    <p class="note center" data-note>Free and open source. For Mac (macOS 14 or later) and Windows (with iCloud for Windows). Works in Chrome, Edge, Brave, Arc and Firefox.</p>
   </header>
 
   <section class="alt" id="compare">
@@ -253,8 +254,8 @@
           </tr>
           <tr class="vs-r">
             <th class="vs-label" scope="row">Windows</th>
-            <td class="vs-v win"><p>Yes</p></td>
-            <td class="vs-v"><p>Not yet. <a href="https://github.com/fanckush/better-passwords-extension/issues/new?title=Windows%20support" target="_blank" rel="noopener">Ask for it</a></p></td>
+            <td class="vs-v"><p>Yes</p></td>
+            <td class="vs-v"><p>Yes, with iCloud for Windows</p></td>
           </tr>
           <tr class="vs-r">
             <th class="vs-label" scope="row">Price</th>
@@ -263,7 +264,7 @@
           </tr>
         </tbody>
       </table>
-      <p class="vs-foot reveal">* Needs the free <a href="/companion">companion Mac app</a>.</p>
+      <p class="vs-foot reveal">* Needs the free <a href="/companion">companion Mac app</a>, so Mac only.</p>
     </div>
   </section>
 
@@ -272,7 +273,7 @@
       <h2 class="h2 center reveal">Your passwords stay with Apple.</h2>
       <p class="lede center reveal d1 priv-lede">Better Passwords fills in the login you pick. That's all it does with it.</p>
       <ul class="trust">
-        <li class="reveal"><span class="trust-tile keys"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M3.6000000000000005 9a5.2 5.2 0 1 1 10.4 0a5.2 5.2 0 1 1 -10.4 0ZM7.300000000000001 12h3v14.5a1.5 1.5 0 0 1 -3 0ZM9.8 19.5h2.8v2.2h-2.8ZM9.8 23.2h2v2.2h-2Z" fill="#b4b4b9"/><circle cx="8.2" cy="7.6" r="1.5" fill="#f4f4f7"/><path d="M10.8 9a5.2 5.2 0 1 1 10.4 0a5.2 5.2 0 1 1 -10.4 0ZM14.5 12h3v14.5a1.5 1.5 0 0 1 -3 0ZM17 18.6h2.2v2.2h-2.2ZM17 22h3v2.2h-3Z" fill="#8e8e93"/><circle cx="15.4" cy="7.6" r="1.5" fill="#f4f4f7"/><path d="M18.0 9a5.2 5.2 0 1 1 10.4 0a5.2 5.2 0 1 1 -10.4 0ZM21.7 12h3v14.5a1.5 1.5 0 0 1 -3 0ZM24.2 20.6h3v2.2h-3ZM24.2 24h2.2v2.2h-2.2Z" fill="#5c5c61"/><circle cx="22.6" cy="7.6" r="1.5" fill="#f4f4f7"/></svg></span><b>Kept by Apple</b><span>Your passwords stay in Apple Passwords on your Mac. We never get a copy.</span></li>
+        <li class="reveal"><span class="trust-tile keys"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M3.6000000000000005 9a5.2 5.2 0 1 1 10.4 0a5.2 5.2 0 1 1 -10.4 0ZM7.300000000000001 12h3v14.5a1.5 1.5 0 0 1 -3 0ZM9.8 19.5h2.8v2.2h-2.8ZM9.8 23.2h2v2.2h-2Z" fill="#b4b4b9"/><circle cx="8.2" cy="7.6" r="1.5" fill="#f4f4f7"/><path d="M10.8 9a5.2 5.2 0 1 1 10.4 0a5.2 5.2 0 1 1 -10.4 0ZM14.5 12h3v14.5a1.5 1.5 0 0 1 -3 0ZM17 18.6h2.2v2.2h-2.2ZM17 22h3v2.2h-3Z" fill="#8e8e93"/><circle cx="15.4" cy="7.6" r="1.5" fill="#f4f4f7"/><path d="M18.0 9a5.2 5.2 0 1 1 10.4 0a5.2 5.2 0 1 1 -10.4 0ZM21.7 12h3v14.5a1.5 1.5 0 0 1 -3 0ZM24.2 20.6h3v2.2h-3ZM24.2 24h2.2v2.2h-2.2Z" fill="#5c5c61"/><circle cx="22.6" cy="7.6" r="1.5" fill="#f4f4f7"/></svg></span><b>Kept by Apple</b><span>Your passwords stay in Apple Passwords on your computer. We never get a copy.</span></li>
         <li class="reveal d1"><span class="trust-tile blue"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6Z"/><circle cx="12" cy="12" r="2.5"/><path d="M4 4l16 16"/></svg></span><b>Nobody watching</b><span>No account to make, and nothing tracking what you do.</span></li>
         <li class="reveal d2"><span class="trust-tile green"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.3-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.7-7 10-7 10Z"/></svg></span><b>Free, and open to check</b><span>It costs nothing, and its code is <a href="https://github.com/fanckush/better-passwords-extension" target="_blank" rel="noopener">public on GitHub</a>.</span></li>
       </ul>
@@ -284,13 +285,14 @@
       <h2 class="h2 center reveal" style="margin-bottom:48px">Questions</h2>
       <div class="faq">
         <details><summary>What is Hide My Email?</summary><p>An iCloud+ feature that gives each site its own random address that forwards to your inbox. If a site sells or leaks it, you turn that one address off. Safari offers it in sign-up forms; this brings it to <span data-browser>Chrome</span>, using your iCloud sign-in in this browser.</p></details>
-        <details><summary>Is this from Apple?</summary><p>No. It's an independent, open-source extension that works with the Apple Passwords already on your Mac.</p></details>
-        <details><summary>Is it safe?</summary><p>Your passwords stay in Apple Passwords. The extension asks your Mac for the one you pick, fills it, and keeps nothing. There are no accounts, no servers and no tracking, and anyone can read the code. The <a href="https://github.com/fanckush/better-passwords-extension/blob/main/docs/threat-model.md" target="_blank" rel="noopener">security details</a> are written down too.</p></details>
-        <details><summary>How do I set it up?</summary><p>Add the extension from your browser's store, then open the <a href="/companion">companion Mac app</a>. It connects <span data-browser>Chrome</span> to Apple Passwords and turns on Touch ID. Unlock once, and turn on Hide My Email from the toolbar if you have iCloud+. Needs macOS 14 (Sonoma) or later.</p></details>
-        <details><summary>What are the six digits?</summary><p>When an extension connects to Apple Passwords, your Mac shows a six-digit code and you type it into the browser, to prove the browser is yours. Apple's extension needs a new one whenever <span data-browser>Chrome</span> puts it to sleep. This extension keeps the connection open for the browser session. With the optional <a href="/companion">companion app</a>, Touch ID enters the code for you.</p></details>
+        <details><summary>Is this from Apple?</summary><p>No. It's an independent, open-source extension that works with the Apple Passwords already on your Mac or PC.</p></details>
+        <details><summary>Is it safe?</summary><p>Your passwords stay in Apple Passwords. The extension asks your computer for the one you pick, fills it, and keeps nothing. There are no accounts, no servers and no tracking, and anyone can read the code. The <a href="https://github.com/fanckush/better-passwords-extension/blob/main/docs/threat-model.md" target="_blank" rel="noopener">security details</a> are written down too.</p></details>
+        <details><summary>How do I set it up?</summary><p>Add the extension from your browser's store, then open the <a href="/companion">companion Mac app</a>. It connects <span data-browser>Chrome</span> to Apple Passwords and turns on Touch ID. Unlock once, and turn on Hide My Email from the toolbar if you have iCloud+. Needs macOS 14 (Sonoma) or later. On Windows, the extension shows a one-line setup instead.</p></details>
+        <details><summary>What are the six digits?</summary><p>When an extension connects to Apple Passwords, your computer shows a six-digit code and you type it into the browser, to prove the browser is yours. Apple's extension needs a new one whenever <span data-browser>Chrome</span> puts it to sleep. This extension keeps the connection open for the browser session. With the optional <a href="/companion">companion app</a>, Touch ID enters the code for you.</p></details>
         <details><summary>Do I need the companion app?</summary><p>It's the easy way, and it's what adds Touch ID and your contact card's emails. <a href="/companion">Get it here</a>. You can skip it, but setting up without it takes a few manual steps. <a href="https://github.com/fanckush/better-passwords-extension#2-connect-your-browser-once" target="_blank" rel="noopener">See how</a>.</p></details>
         <details><summary>Does it cost anything?</summary><p>No. The extension and the companion app are free. Hide My Email is part of iCloud+, which you pay Apple for.</p></details>
-        <details><summary>Does it work on Windows?</summary><p>Not yet. It's Mac only for now, because it works with the Apple Passwords helper built into macOS. If you'd use it on Windows, <a href="https://github.com/fanckush/better-passwords-extension/issues/new?title=Windows%20support" target="_blank" rel="noopener">open an issue</a> to ask for it.</p></details>
+        <details><summary>Does it work on Windows?</summary><p>Yes, with <a href="https://apps.microsoft.com/detail/9PKTQ5699M62" target="_blank" rel="noopener">iCloud for Windows</a> from the Microsoft Store, signed in with Passwords turned on. Add the extension, then run the setup command it shows in PowerShell. The companion app is Mac only, so on Windows you type the six-digit code once each time you open your browser.</p></details>
+        <details><summary>Does it work on Linux?</summary><p>No. Apple's password helper only comes with macOS and with iCloud for Windows, and Better Passwords works through it. There's nothing like it on Linux.</p></details>
       </div>
     </div>
   </section>
@@ -304,7 +306,7 @@
         <a class="add big" data-add href="#tour"><svg data-logo aria-hidden="true"></svg><span data-label>Add to Chrome</span></a>
         <a class="other" data-other href="#tour"><svg data-logo aria-hidden="true"></svg><span data-label>Also for Firefox</span></a>
       </div>
-      <p class="note" data-note>Mac only (macOS 14 or later). Works in Chrome, Edge, Brave, Arc and Firefox.</p>
+      <p class="note" data-note>For Mac (macOS 14 or later) and Windows (with iCloud for Windows). Works in Chrome, Edge, Brave, Arc and Firefox.</p>
     </div>
   </section>
 </main>

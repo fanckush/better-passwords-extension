@@ -1,11 +1,14 @@
 // The optional Mac companion app (apps/companion). After Touch ID it reads the pairing code off
 // Apple's window, so the user doesn't have to type it. It is a separate native host, and the
-// extension works the same without it.
+// extension works the same without it. There is none for Windows.
 
 import { COMPANION_HOST } from "./config.ts";
 
-/** "ready": installed and allowed; "needs-setup": installed but Accessibility is off. */
-export type CompanionState = "ready" | "needs-setup" | "not-installed";
+/**
+ * "ready": installed and allowed; "needs-setup": installed but Accessibility is off;
+ * "unavailable": not on a Mac, so there's no app to offer.
+ */
+export type CompanionState = "ready" | "needs-setup" | "not-installed" | "unavailable";
 
 /**
  * A newer companion app is out. "app": the app updates itself once opened. "download": an app from
@@ -74,6 +77,8 @@ export class Companion {
     private readonly sendNative: SendNative = (host, message) =>
       browser.runtime.sendNativeMessage(host, message as object),
     private readonly now: () => number = Date.now,
+    /** Whether the app can exist here at all (it is Mac only). */
+    private readonly available: () => Promise<boolean> = async () => true,
   ) {}
 
   /** Whether the companion can unlock. Cached briefly: each check starts the host and the agent. */
@@ -90,6 +95,10 @@ export class Companion {
     if (this.#cached && this.now() - this.#cached.at < STATE_TTL_MS) return this.#cached;
     let state: CompanionState;
     let update: CompanionUpdate | undefined;
+    if (!(await this.available())) {
+      this.#cached = { state: "unavailable", update: undefined, at: this.now() };
+      return this.#cached;
+    }
     try {
       const reply = (await within(this.sendNative(COMPANION_HOST, { type: "hello" }), QUICK_MS)) as
         | HostResponse
@@ -160,6 +169,7 @@ export class Companion {
    * browsers. Best effort: without the app, or with one from before this, nothing happens.
    */
   async reportHelper(blocked: boolean): Promise<void> {
+    if (!(await this.available())) return;
     await within(this.sendNative(COMPANION_HOST, { type: "helper-status", blocked }), QUICK_MS).catch(() => {});
   }
 }

@@ -47,6 +47,11 @@ export interface FakeHelperOptions {
   /** Fixed pairing code; random when omitted. Read it from `currentCode`. */
   code?: string;
   base64?: boolean;
+  /**
+   * Answer like iCloud for Windows' helper: hex encoding, no `shouldUseBase64` in the capabilities,
+   * and the handshake's MSG as a string ("MSG": "1").
+   */
+  windows?: boolean;
   capabilities?: Capabilities;
   /** Answer macOS's "Save password?" prompt with Don't Save. */
   declineSaves?: boolean;
@@ -84,6 +89,7 @@ export class FakeHelper {
   readonly oneTimeCodeFills: { frameURLs: string[]; username?: string }[] = [];
   readonly #fixedCode: string | undefined;
   readonly #codec: BinaryCodec;
+  readonly #windows: boolean;
   readonly #capabilities: Capabilities;
   readonly #declineSaves: boolean;
   readonly #now: () => number;
@@ -102,12 +108,13 @@ export class FakeHelper {
     this.#now = options.now ?? Date.now;
     this.#codesNeedAuthentication = options.requiresAuthenticationForCodes ?? true;
     this.#codesReply = options.oneTimeCodesReply;
-    this.#codec = new BinaryCodec(options.base64 ?? true);
-    this.#capabilities = {
-      shouldUseBase64: options.base64 ?? true,
-      canFillOneTimeCodes: true,
-      ...options.capabilities,
-    };
+    this.#windows = options.windows ?? false;
+    const base64 = !this.#windows && (options.base64 ?? true);
+    this.#codec = new BinaryCodec(base64);
+    this.#capabilities = this.#windows
+      ? { canFillOneTimeCodes: true, supportsSubURLs: true, scanForOTPURI: true, secretSessionVersion: 1 }
+      : { shouldUseBase64: base64, canFillOneTimeCodes: true };
+    Object.assign(this.#capabilities, options.capabilities);
   }
 
   /** Handles one request and returns the replies to send (usually exactly one). */
@@ -146,9 +153,9 @@ export class FakeHelper {
 
   async #handshakeStep(message: HelperMessage): Promise<HelperMessage> {
     const msg = message.msg as { QID: string; PAKE: string };
-    const reply = (value: unknown): HelperMessage => ({
+    const reply = (value: { MSG: number } & Record<string, unknown>): HelperMessage => ({
       cmd: Command.Handshake,
-      payload: { PAKE: pake.encode(value) },
+      payload: { PAKE: pake.encode(this.#windows ? { ...value, MSG: String(value.MSG) } : value) },
     });
 
     if (msg.QID === "m0") {

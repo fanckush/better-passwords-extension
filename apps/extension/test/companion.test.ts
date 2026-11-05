@@ -32,6 +32,15 @@ describe("Companion", () => {
     expect(await new Companion(host.send).state()).toBe("not-installed");
   });
 
+  it("is unavailable off a Mac, without asking any host", async () => {
+    const host = fakeHost(() => ({ ok: true, accessibility: true }));
+    const companion = new Companion(host.send, Date.now, async () => false);
+    expect(await companion.state()).toBe("unavailable");
+    expect(await companion.update()).toBeUndefined();
+    await companion.reportHelper(true);
+    expect(host.calls).toEqual([]);
+  });
+
   it("caches the state briefly", async () => {
     let now = 0;
     const host = fakeHost(() => ({ ok: true, accessibility: true }));

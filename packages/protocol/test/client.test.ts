@@ -82,6 +82,23 @@ describe("ApplePasswordsClient", () => {
     expect(await client.getLogins("other.test", tab)).toHaveLength(1);
   });
 
+  it("pairs with iCloud for Windows' helper, which sends MSG as a string", async () => {
+    const helper = new FakeHelper({ vault, windows: true });
+    const client = await ApplePasswordsClient.connect(new MemoryTransport(helper));
+    expect(client.capabilities.shouldUseBase64).toBeUndefined();
+    await pair(helper, client);
+    expect(client.state).toBe("unlocked");
+    expect(await client.getPassword("other.test", "carol", tab)).toMatchObject({ password: "hunter2" });
+  });
+
+  it("rejects a wrong code from iCloud for Windows' helper too", async () => {
+    const helper = new FakeHelper({ vault, windows: true });
+    const client = await ApplePasswordsClient.connect(new MemoryTransport(helper));
+    await client.requestChallenge();
+    const wrong = helper.currentCode === "000000" ? "111111" : "000000";
+    await expect(client.verifyCode(wrong)).rejects.toMatchObject({ code: "incorrect-code" });
+  });
+
   it("rejects a wrong code and burns the challenge", async () => {
     const { helper, client } = await setup();
     await client.requestChallenge();

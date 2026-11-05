@@ -1,6 +1,6 @@
 # Architecture
 
-Better Passwords is a browser extension that reads logins from Apple Passwords (iCloud Keychain) on macOS. It doesn't store passwords and doesn't run a server: every request goes to Apple's own helper program, which ships with macOS 14 and later.
+Better Passwords is a browser extension that reads logins from Apple Passwords (iCloud Keychain) on macOS and Windows. It doesn't store passwords and doesn't run a server: every request goes to Apple's own helper program, which ships with macOS 14 and later, and with iCloud for Windows.
 
 ```
 popup · inline menu (our extension pages)      autofill content script (on login pages)
@@ -23,7 +23,8 @@ Apple Passwords / iCloud Keychain
 | `packages/fake-helper` | A test double of Apple's helper. Used in-process by unit tests and as a real native-messaging host by the e2e tests. |
 | `apps/extension` | The WXT extension: background worker, popup, the page-fill function, and the browser packages. |
 | `apps/companion` | The optional Touch ID companion app (Swift). See [companion.md](companion.md). |
-| `scripts/setup-mac.sh` | One-time browser setup (see below). |
+| `scripts/setup-mac.sh` | One-time browser setup on macOS (see below). |
+| `scripts/setup-windows.ps1` | The same setup on Windows (see [Windows](#windows)). |
 
 ## One identity, separate browser packages
 
@@ -39,13 +40,19 @@ The helper's code signature has *parent launch constraints*: macOS kills it unle
 
 ## First run
 
-Until the bridge is registered, connecting fails with the browser's "host not found", and the extension treats that as "not set up yet", not as an error. A fresh install that can't reach the helper opens `setup.html`; password fields offer "Set Up Better Passwords", which opens the same page; and the popup shows the same flow (`src/ui/setup.ts`). It offers the companion app or the setup command, retries the connection every 1.5 seconds while on screen, and says when it worked. That is said once, even if the popup closed while the user ran the command: the background remembers that setup was pending until the user sees it or unlocks. On anything but macOS, it only says that a Mac is needed.
+Until the bridge is registered, connecting fails with the browser's "host not found", and the extension treats that as "not set up yet", not as an error. A fresh install that can't reach the helper opens `setup.html`; password fields offer "Set Up Better Passwords", which opens the same page; and the popup shows the same flow (`src/ui/setup.ts`). It offers the companion app or the setup command, retries the connection every 1.5 seconds while on screen, and says when it worked. That is said once, even if the popup closed while the user ran the command: the background remembers that setup was pending until the user sees it or unlocks. On Windows it offers the PowerShell command instead (there's no companion app). On anything else, it only says that a Mac or a PC is needed.
+
+## Windows
+
+iCloud for Windows (a Microsoft Store package) ships the same helper as `iCloudPasswordsExtensionHelper.exe`, and registers it as `com.apple.passwordmanager` for Apple's own extension IDs only. `scripts/setup-windows.ps1` writes our manifests to `%LOCALAPPDATA%\Better Passwords\` and registers them under `HKCU\Software\<browser>\NativeMessagingHosts`, pointing at the package's app execution alias (`%LOCALAPPDATA%\Microsoft\WindowsApps\iCloudPasswordsExtensionHelper.exe`). The package's own folder is renamed with each iCloud update; the alias isn't.
+
+Windows has no launch constraints, so no browser is blocked. A helper that quits as it starts means iCloud for Windows was removed or its alias turned off, and the setup flow says that instead. The companion app is Mac only: off a Mac, it's never asked or offered (`unavailable` in `src/companion.ts`). Apple's Windows helper never asks for Windows Hello before giving out a password or a code, so on Windows the session ends when the PC locks unless the user turns that off (`defaultSettings` in `src/messages.ts`), and the code screens don't say "Confirm with Touch ID". What's different in the helper's protocol is in [protocol.md](protocol.md#windows).
 
 ## Sessions
 
 Apple's helper keeps the pairing key only in its own memory. When the native port closes, the helper exits and the key is gone, and the next connection needs a new 6-digit code. Apple's extension lets that happen whenever its background worker goes idle, which is why it asks so often.
 
-Our background worker keeps the port open. Chrome keeps an extension's worker alive while it has an open native-messaging port (Chrome 105+), and a 30-second `chrome.alarms` fallback is armed while unlocked. The result is one pairing per browser launch. Optionally, the session also ends when the Mac locks (`idle.onStateChanged`).
+Our background worker keeps the port open. Chrome keeps an extension's worker alive while it has an open native-messaging port (Chrome 105+), and a 30-second `chrome.alarms` fallback is armed while unlocked. The result is one pairing per browser launch. Optionally, the session also ends when the computer locks (`idle.onStateChanged`).
 
 ## Updates
 

@@ -33,10 +33,18 @@ jobs:
           retention-days: 1
       - run: bun run build
       - run: bun run --filter @app/extension lint:firefox
-      - name: Check the setup script
+      - name: Check the macOS setup script
         run: |
           sh -n scripts/setup-mac.sh
           shellcheck scripts/setup-mac.sh
+      - name: Check the Windows setup script
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("scripts/setup-windows.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error $_.ToString() }; exit 1 }
+          $issues = Invoke-ScriptAnalyzer -Path scripts/setup-windows.ps1 -Severity Error, Warning -ExcludeRule PSAvoidUsingWriteHost
+          if ($issues) { $issues | Format-Table -AutoSize | Out-String | Write-Host; exit 1 }
 
   # runs no repository code: it only turns the summary into the README badge
   coverage-badge:

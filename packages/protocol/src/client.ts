@@ -204,8 +204,10 @@ export class ApplePasswordsClient {
       const exchange = pake.decode<ServerKeyExchange>(requireString(reply.payload?.PAKE));
       if (exchange.TID !== username) throw invalid("challenge for another session");
       if (exchange.ErrCode !== undefined) throw invalid(`helper refused pairing (${exchange.ErrCode})`);
-      if (exchange.MSG !== PakeMessage.ServerKeyExchange) throw invalid("unexpected handshake message");
-      if (exchange.PROTO !== SRP_WITH_RFC_VERIFICATION) {
+      if (pakeNumber(exchange.MSG) !== PakeMessage.ServerKeyExchange) {
+        throw invalid(`unexpected handshake message (MSG ${JSON.stringify(exchange.MSG)})`);
+      }
+      if (pakeNumber(exchange.PROTO) !== SRP_WITH_RFC_VERIFICATION) {
         throw new ProtocolError("helper chose an unsupported protocol", "unsupported");
       }
 
@@ -248,11 +250,14 @@ export class ApplePasswordsClient {
 
       const verification = pake.decode<ServerVerification>(requireString(reply.payload?.PAKE));
       if (verification.TID !== this.#username) throw invalid("verification for another session");
-      if (verification.MSG !== PakeMessage.ServerVerification) throw invalid("unexpected handshake message");
-      if (verification.ErrCode === PAKE_ERROR_INCORRECT_CODE) {
+      if (pakeNumber(verification.MSG) !== PakeMessage.ServerVerification) {
+        throw invalid(`unexpected handshake message (MSG ${JSON.stringify(verification.MSG)})`);
+      }
+      const errCode = pakeNumber(verification.ErrCode);
+      if (errCode === PAKE_ERROR_INCORRECT_CODE) {
         throw new ProtocolError("incorrect code", "incorrect-code");
       }
-      if (verification.ErrCode !== undefined && verification.ErrCode !== 0) {
+      if (verification.ErrCode !== undefined && errCode !== 0) {
         throw invalid(`verification failed (${verification.ErrCode})`);
       }
       if (!handshake.verifyServerProof(this.#codec.decode(requireString(verification.HAMK)))) {
@@ -558,6 +563,12 @@ function toOneTimeCode(entry: unknown): OneTimeCode[] {
       source: e.source,
     },
   ];
+}
+
+/** A number from a PAKE reply, which the Windows helper may send as a string; NaN if neither. */
+function pakeNumber(value: unknown): number {
+  if (typeof value === "number") return value;
+  return typeof value === "string" && /^-?\d+$/.test(value) ? Number(value) : Number.NaN;
 }
 
 function requireString(value: unknown): string {

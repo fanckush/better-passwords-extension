@@ -9,7 +9,8 @@ import { ApplePasswordsClient, type ClientState, ProtocolError, type Transport }
 /**
  * "no-helper": this browser has no registration for the helper (setup needed). "blocked": it has
  * one, but the helper quits before answering: macOS kills it when the browser isn't one Apple lets
- * start it (its launch constraints), which Better Passwords can't fix.
+ * start it (its launch constraints), which Better Passwords can't fix. On Windows it means the
+ * registered helper won't start: iCloud for Windows was removed, or its helper alias turned off.
  */
 export type SessionState = "disconnected" | "no-helper" | "blocked" | ClientState;
 
@@ -79,7 +80,7 @@ export class Session {
     await this.#restored;
     if (this.#client && this.#client.state !== "closed") return this.#client;
     if (this.#status.state === "blocked" && !retry && !this.#connecting) {
-      throw Object.assign(new Error("macOS doesn't let Apple's password helper run in this browser."), {
+      throw Object.assign(new Error("Apple's password helper can't start in this browser."), {
         code: "blocked",
       });
     }

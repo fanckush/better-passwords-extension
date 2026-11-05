@@ -2,6 +2,7 @@ import "./style.css";
 import { DISPLAY_NAME } from "@/src/config.ts";
 import { requestHideMyEmailConsent } from "@/src/icloud/consent.ts";
 import { type LoginsResult, type OneTimeCodesResult, type Settings, type Status, send } from "@/src/messages.ts";
+import { computerName, platform } from "@/src/platform.ts";
 import { applySystemAccent } from "@/src/ui/accent.ts";
 import { bindCodeInput } from "@/src/ui/code-input.ts";
 import { companionPitch } from "@/src/ui/companion-pitch.ts";
@@ -13,6 +14,10 @@ import { setupFlow } from "@/src/ui/setup.ts";
 applySystemAccent();
 
 const app = document.getElementById("app") as HTMLElement;
+/** "Mac" or "PC": the computer showing Apple's code (set before the first screen). */
+let computer = "Mac";
+/** What's shown while a verification code is fetched: macOS asks for Touch ID, Windows nothing. */
+let fetchingCode = "Confirm with Touch ID…";
 
 function show(...children: (Node | false | null | undefined)[]) {
   app.replaceChildren(...children.filter((c): c is Node => Boolean(c)));
@@ -46,11 +51,17 @@ async function refresh(error?: string) {
   // a fresh code even if one is still valid: the user may have closed Apple's window since, and
   // nothing tells us
   codeRequest = popupSettled().then(() => send({ type: "request-code", fresh: true }));
-  showCodeEntry(status, error ?? (awaitingCode ? status.error : undefined));
+  const input = showCodeEntry(status, error ?? (awaitingCode ? status.error : undefined));
   try {
     await codeRequest;
   } catch (e) {
     return showRetry(error ?? messageOf(e));
+  }
+  // Apple's code window can take the keyboard as it opens (on Windows it opens slowly, and only
+  // then does the helper answer), so give it back to the box, unless the user is typing already
+  if (input.isConnected && !input.disabled && input.value === "") {
+    window.focus();
+    input.focus();
   }
 }
 
@@ -104,7 +115,8 @@ function showRetry(error: string) {
   );
 }
 
-function showCodeEntry(status: Status, error?: string) {
+/** Shows the box for the code and returns it. */
+function showCodeEntry(status: Status, error?: string): HTMLInputElement {
   const input = h("input", {
     class: "code",
     inputMode: "numeric",
@@ -146,8 +158,12 @@ function showCodeEntry(status: Status, error?: string) {
   const report = reportProblem();
 
   show(
-    h("h1", { textContent: "Enter the code shown on your Mac" }),
-    h("p", {}, "Your Mac is showing a 6-digit verification code. You only need to do this once per browser session."),
+    h("h1", { textContent: `Enter the code shown on your ${computer}` }),
+    h(
+      "p",
+      {},
+      `Your ${computer} is showing a 6-digit verification code. You only need to do this once per browser session.`,
+    ),
     input,
     errorLine(error),
     h("div", { class: "actions" }, newCode, touchId),
@@ -167,6 +183,7 @@ function showCodeEntry(status: Status, error?: string) {
   };
   window.addEventListener("focus", refocus);
   requestAnimationFrame(refocus);
+  return input;
 }
 
 async function showLogins(status: Status, error?: string) {
@@ -335,7 +352,7 @@ async function oneTimeCodes(tabId: number) {
       ),
     );
     fillButton.addEventListener("click", async () => {
-      say("Confirm with Touch ID…");
+      say(fetchingCode);
       try {
         const { result: filled } = await send({ type: "fill-one-time-code", tabId, id: code.id });
         if (filled === "filled") return window.close();
@@ -367,7 +384,7 @@ async function oneTimeCodes(tabId: number) {
     copy.addEventListener("click", async () => {
       if (waiting) return write(waiting.digits).catch((e) => say(messageOf(e), true));
       copy.disabled = true;
-      say("Confirm with Touch ID…");
+      say(fetchingCode);
       try {
         const { code: digits } = await send({ type: "copy-one-time-code", tabId, id: code.id });
         await write(digits).catch(() => {
@@ -476,14 +493,14 @@ async function footer(status: Status) {
     option("oneTimeCodes", "Verification codes", "when a site asks for one"),
     option("generatePasswords", "When signing up", "strong passwords and emails"),
     option("hideMyEmail", "Hide My Email", "iCloud+ addresses, labeled with the site's name"),
-    h("hr"),
-    macAppSection(status, option),
+    // the companion app is Mac only; elsewhere there's nothing to offer
+    ...(status.companion === "unavailable" ? [] : [h("hr"), macAppSection(status, option)]),
     h("hr"),
     // Firefox's idle API never reports "locked", so the option would do nothing there
     h(
       "div",
       { class: "actions" },
-      import.meta.env.FIREFOX ? h("span") : option("lockOnScreenLock", "Lock when my Mac locks"),
+      import.meta.env.FIREFOX ? h("span") : option("lockOnScreenLock", `Lock when my ${computer} locks`),
       lock,
     ),
   );
@@ -548,4 +565,9 @@ function messageOf(error: unknown): string {
   return text || "Something went wrong. Try again, or reload the extension.";
 }
 
-void refresh();
+void platform()
+  .then((os) => {
+    computer = computerName(os);
+    if (os === "windows") fetchingCode = "Getting the code…";
+  })
+  .finally(() => void refresh());

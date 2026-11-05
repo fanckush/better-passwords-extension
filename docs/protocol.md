@@ -79,3 +79,15 @@ While `RequiresUserAuthenticationToFill` is set, `code` is `null`. A list never 
 
 **Cmd 15** arrives from the helper without data. Apple's extension lists codes again when it gets one. It probably signals a code that arrived by SMS. We haven't seen one yet.
 
+
+## Windows
+
+iCloud for Windows' `iCloudPasswordsExtensionHelper.exe` (version 15.10.39.0) has the same commands, 0 to 18, under the same numbers, and the same pairing and query fields. Pairing and filling were checked against the live helper, in Brave. The differences:
+- Its capabilities reply has `canFillOneTimeCodes`, `supportsSubURLs`, `scanForOTPURI` and `secretSessionVersion: 1`, and no `shouldUseBase64`. So the client encodes binary fields as hex, as for older macOS, and that pairs.
+- Its PAKE replies send `MSG` as a string (`"1"`, `"3"`) where macOS sends a number. The client reads `MSG`, `PROTO` and `ErrCode` either way (`pakeNumber` in `client.ts`), and the fake helper's `windows` option answers like this.
+- It doesn't advertise `canSaveAccountWithEmptyUserName`.
+- It never asks for Windows Hello or a password before giving out a password or a code, so the extension locks when the PC locks by default there (`defaultSettings` in `src/messages.ts`).
+
+Saving logins and verification codes haven't been checked on Windows yet.
+
+The helper shows the pairing code in its own window. No check of the calling extension's ID was found: like on macOS, only the host manifest's allowed IDs decide which extension may start it.

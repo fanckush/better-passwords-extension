@@ -33,11 +33,11 @@ The product name is **Better Passwords**. Use the separate compatibility line:
 > • Open the Passwords app for the current site
 > • Lock any time; on Chromium browsers, optionally lock when your Mac locks
 >
-> Password lookup and saving use Apple's password helper locally on your Mac, over encrypted pairing. Settings are saved on your device; credentials and temporary suggestions are held in memory. The project runs no backend and includes no analytics or advertising.
+> Password lookup and saving use Apple's password helper locally on your computer, over encrypted pairing. Settings are saved on your device; credentials and temporary suggestions are held in memory. The project runs no backend and includes no analytics or advertising.
 >
 > If you enable Hide My Email, the extension connects to Apple's iCloud using your existing icloud.com sign-in. Creating an alias sends the alias and the current site's hostname to Apple. The optional companion can also provide email suggestions from your own contact card, with your permission.
 >
-> Requires macOS 14 or later, signed in to iCloud with Passwords turned on, and a one-time setup command or the companion app. Setup: https://github.com/fanckush/better-passwords-extension#setup
+> Requires macOS 14 or later, or Windows with iCloud for Windows, signed in to iCloud with Passwords turned on, and a one-time setup command or the companion app (Mac only). Setup: https://github.com/fanckush/better-passwords-extension#setup
 >
 > Free and open source (MIT). Not affiliated with or endorsed by Apple Inc.
 

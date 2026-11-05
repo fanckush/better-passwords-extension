@@ -4,6 +4,7 @@
 import type { FieldKind } from "./autofill/fields.ts";
 import type { CompanionState, CompanionUpdate } from "./companion.ts";
 import type { FieldRules, PasswordStyle, Strength, Suggestion } from "./passwords/generate.ts";
+import type { Platform } from "./platform.ts";
 import type { SessionStatus } from "./session/session.ts";
 
 export type Request =
@@ -124,6 +125,14 @@ export const DEFAULT_SETTINGS: Settings = {
   suggestEmails: true,
   companionCodeHint: true,
 };
+
+/**
+ * The defaults on this platform. Apple's helper on Windows never asks before giving out a password,
+ * so there the session ends when the PC locks unless the user says otherwise.
+ */
+export function defaultSettings(platform: Platform): Settings {
+  return platform === "windows" ? { ...DEFAULT_SETTINGS, lockOnScreenLock: true } : DEFAULT_SETTINGS;
+}
 
 export interface Status extends SessionStatus {
   /** The companion app, checked only while locked (unlocked sessions don't need it). */

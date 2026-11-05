@@ -5,6 +5,7 @@
 [![Latest release](https://img.shields.io/github/v/release/fanckush/better-passwords-extension?filter=extension-v*&label=release)](https://github.com/fanckush/better-passwords-extension/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/fanckush/better-passwords-extension)](LICENSE)
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-informational)](#setup)
+[![Windows 10+](https://img.shields.io/badge/Windows-10%2B-informational)](#on-windows)
 
 **An alternative to Apple's iCloud Passwords extension for Chromium and firefox based browsers**
 
@@ -62,6 +63,16 @@ curl -fsSL https://github.com/fanckush/better-passwords-extension/raw/main/scrip
 The script lets the extension reach Apple's built-in password helper. You can find it [here](scripts/setup-mac.sh). To undo use it with `--uninstall`.
 
 The setup connects Chrome, Brave, Edge, Vivaldi, Arc, Dia, Helium, Crest, Ardia, Yab, Search, Chromium, Firefox and Zen. Ardia and Yab can't use Apple Passwords yet: macOS stops them from starting Apple's helper. They'll work as soon as that changes. Using another browser? [Ask for it](https://github.com/fanckush/better-passwords-extension/issues/new?template=browser.yml).
+
+### On Windows
+
+Install [iCloud for Windows](https://apps.microsoft.com/detail/9PKTQ5699M62) from the Microsoft Store, sign in and turn on Passwords. Then run this in PowerShell:
+
+```powershell
+irm https://github.com/fanckush/better-passwords-extension/raw/main/scripts/setup-windows.ps1 | iex
+```
+
+The script lets the extension reach the password helper that comes with iCloud for Windows. You can find it [here](scripts/setup-windows.ps1). To undo, download it and run `powershell -ExecutionPolicy Bypass -File setup-windows.ps1 -Uninstall`. It connects Chrome, Edge, Brave, Chromium and Firefox; other Chromium browsers usually read Chrome's setup. The companion app is Mac only, so on Windows you type the 6-digit code once per browser session. Apple's Windows helper doesn't ask for anything before filling, so Better Passwords locks when your PC locks (you can turn that off in the popup). Firefox doesn't tell extensions when the PC locks, so there it stays unlocked until you click Lock or quit Firefox.
 
 ## Contributing
 

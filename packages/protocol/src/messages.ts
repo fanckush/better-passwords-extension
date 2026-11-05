@@ -83,20 +83,23 @@ export interface SecureMessage {
   SDATA: string;
 }
 
+/** Numbers in PAKE replies: the Windows helper sends some as strings ("MSG": "1"). */
+export type PakeNumber = number | string;
+
 export interface ServerKeyExchange {
   TID: string;
-  MSG: number;
+  MSG: PakeNumber;
   B: string;
   s: string;
-  PROTO: number;
-  ErrCode?: number;
+  PROTO: PakeNumber;
+  ErrCode?: PakeNumber;
 }
 
 export interface ServerVerification {
   TID: string;
-  MSG: number;
+  MSG: PakeNumber;
   HAMK?: string;
-  ErrCode?: number;
+  ErrCode?: PakeNumber;
 }
 
 export interface LoginEntry {
