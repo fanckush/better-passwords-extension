@@ -4,7 +4,7 @@ The text and answers behind the [Chrome Web Store](https://chromewebstore.google
 
 Reviewer build and testing instructions: [reviewer-build.md](reviewer-build.md). Screenshots and promotional art: [store-media.md](store-media.md).
 
-On Firefox, the screen-lock bullet reads “Lock any time from the toolbar popup.” Firefox summary: “Fill and save logins from Apple Passwords on your Mac, with inline suggestions and optional Touch ID and Hide My Email.”
+On Firefox, the screen-lock bullet reads “Lock any time from the toolbar popup.” Firefox summary: “Fill and save logins from Apple Passwords on your Mac or Windows PC, with inline suggestions, optional Hide My Email, and optional Touch ID on a Mac.”
 
 ## Name and compatibility
 
@@ -16,11 +16,11 @@ The product name is **Better Passwords**. Use the separate compatibility line:
 
 ## Short description (Chrome: 132 characters max)
 
-> Fill logins from Apple Passwords on your Mac. Pair once per browser session, or unlock with Touch ID.
+> Fill logins from Apple Passwords on your Mac or Windows PC. Pair once per browser session, or unlock with Touch ID on a Mac.
 
 ## Detailed description
 
-> Use the passwords you keep in Apple Passwords (iCloud Keychain) in your browser on your Mac.
+> Use the passwords you keep in Apple Passwords (iCloud Keychain) in your browser, on your Mac or on Windows with iCloud for Windows.
 >
 > Better Passwords keeps the connection to Apple's password helper open, so you can stay paired for the browser session. With the optional, free Mac companion, you can unlock with Touch ID instead of typing a pairing code.
 >
@@ -31,7 +31,7 @@ The product name is **Better Passwords**. Use the separate compatibility line:
 > • Fill two-factor verification codes saved in Apple Passwords
 > • Use Hide My Email in email fields (optional; requires iCloud+)
 > • Open the Passwords app for the current site
-> • Lock any time; on Chromium browsers, optionally lock when your Mac locks
+> • Lock any time; on Chromium browsers, optionally lock when your computer locks (on by default on Windows)
 >
 > Password lookup and saving use Apple's password helper locally on your computer, over encrypted pairing. Settings are saved on your device; credentials and temporary suggestions are held in memory. The project runs no backend and includes no analytics or advertising.
 >
@@ -53,8 +53,8 @@ The product name is **Better Passwords**. Use the separate compatibility line:
 | `host_permissions` `https://*/*`, `http://localhost/*`, `http://127.0.0.1/*` | To show login suggestions in login fields on any site the user visits, and to fill the login the user picks. |
 | `activeTab`, `scripting` | To fill the chosen login into the current tab when the user picks it from the toolbar popup. |
 | `storage` | To remember the user's settings. |
-| `alarms` | To keep the connection to the Mac alive, so the user isn't asked for a new code. |
-| `idle` | To lock when the Mac's screen locks, if the user turned that on. |
+| `alarms` | To keep the connection to Apple's password helper alive, so the user isn't asked for a new code. |
+| `idle` | To lock when the computer's screen locks, if that's turned on (it is by default on Windows). |
 | `declarativeNetRequestWithHostAccess` | Only for the opt-in Hide My Email feature: iCloud's web service accepts requests only with icloud.com's Origin, so while the user has it on, a session rule sets that header on the extension's own requests to iCloud. Websites' requests are never modified. |
 
 **Remote code:** No. All code ships in the package.
@@ -70,4 +70,4 @@ The product name is **Better Passwords**. Use the separate compatibility line:
 - **Payment requirement:** discloses that the optional Hide My Email feature needs an Apple iCloud+ subscription; the extension itself is free.
 - **Source code:** the build bundles code, so each version uploads the sources zip (`bun run zip:all` makes `better-passwords-<version>-sources.zip`). It includes the workspace packages and root lockfile; run the reviewer commands from its root.
 - **Notes for reviewers:**
-  > Built with Bun 1.3.14 and WXT 0.21.4. To reproduce: `bun install --frozen-lockfile --ignore-scripts && bun run --filter @app/extension build:firefox`. The output is `apps/extension/.output/firefox-mv2`. The extension uses native messaging to reach Apple's PasswordManagerBrowserExtensionHelper, which ships with macOS. Testing needs a Mac signed in to iCloud and the setup in scripts/setup-mac.sh.
+  > Built with Bun 1.3.14 and WXT 0.21.4. To reproduce: `bun install --frozen-lockfile --ignore-scripts && bun run --filter @app/extension build:firefox`. The output is `apps/extension/.output/firefox-mv2`. The extension uses native messaging to reach Apple's PasswordManagerBrowserExtensionHelper, which ships with macOS and with iCloud for Windows. Testing needs a Mac signed in to iCloud and the setup in scripts/setup-mac.sh, or Windows with iCloud for Windows and scripts/setup-windows.ps1.
