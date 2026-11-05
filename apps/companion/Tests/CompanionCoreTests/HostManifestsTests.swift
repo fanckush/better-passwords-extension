@@ -3,12 +3,17 @@ import Testing
 
 @testable import CompanionCore
 
+/// A browser's data folder under `support`, with a profile in it as a browser that has run has.
+func makeBrowserFolder(_ path: String, in support: URL) throws {
+    try FileManager.default.createDirectory(
+        at: support.appendingPathComponent(path).appendingPathComponent("Default"), withIntermediateDirectories: true)
+}
+
 @Suite struct HostManifestsTests {
     private func temporarySupport(with browsers: [String]) throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         for browser in browsers {
-            try FileManager.default.createDirectory(
-                at: root.appendingPathComponent(browser), withIntermediateDirectories: true)
+            try makeBrowserFolder(browser, in: root)
         }
         return root
     }
@@ -47,6 +52,31 @@ import Testing
         #expect(
             !FileManager.default.fileExists(atPath: support.appendingPathComponent("zen/NativeMessagingHosts").path))
         #expect(HostManifests.connected(hostPath: "/h", support: support).map(\.name) == ["Zen"])
+    }
+
+    @Test func searchUsesChromiumsFolderWithoutLookingLikeChromium() throws {
+        let support = try temporarySupport(with: ["Search"])
+        defer { try? FileManager.default.removeItem(at: support) }
+
+        let done = try HostManifests.install(hostPath: "/h", support: support)
+        #expect(done.map(\.name) == ["Search"])
+        let chromium = support.appendingPathComponent("Chromium/NativeMessagingHosts")
+        #expect(
+            FileManager.default.fileExists(
+                atPath: chromium.appendingPathComponent("io.github.fanckush.betterpasswords.companion.json").path))
+        // the folder made for Search's manifests isn't a Chromium install
+        #expect(HostManifests.installed(in: support).map(\.name) == ["Search"])
+        #expect(HostManifests.connected(hostPath: "/h", support: support).map(\.name) == ["Search"])
+        #expect(HostManifests.browser(bundleID: "com.officecommun.search", name: "Search")?.name == "Search")
+    }
+
+    @Test func aRealChromiumSharesItsFolderWithSearch() throws {
+        let support = try temporarySupport(with: ["Search", "Chromium"])
+        defer { try? FileManager.default.removeItem(at: support) }
+
+        try HostManifests.install(hostPath: "/h", support: support)
+        let search = HostManifests.browsers.first { $0.name == "Search" }!
+        #expect(HostManifests.sharing(search, in: support).map(\.name) == ["Chromium", "Search"])
     }
 
     @Test func firefoxManifestsUseExtensionIDs() throws {
@@ -96,8 +126,7 @@ import Testing
     private func setUp(_ browsers: [String]) throws -> (URL, BrowserLinks) {
         let support = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         for browser in browsers {
-            try FileManager.default.createDirectory(
-                at: support.appendingPathComponent(browser), withIntermediateDirectories: true)
+            try makeBrowserFolder(browser, in: support)
         }
         let defaults = UserDefaults(suiteName: "BrowserLinksTests.\(UUID().uuidString)")!
         return (support, BrowserLinks(defaults: defaults))
@@ -123,8 +152,7 @@ import Testing
         links.disconnect(helium, support: support)
         #expect(names(HostManifests.connected(hostPath: "/h", support: support)) == ["Google Chrome"])
         // a browser installed since is connected; the disconnected one stays so
-        try FileManager.default.createDirectory(
-            at: support.appendingPathComponent("com.ardia.browser/Chromium"), withIntermediateDirectories: true)
+        try makeBrowserFolder("com.ardia.browser/Chromium", in: support)
         #expect(names(links.connectNew(hostPath: "/h", support: support)) == ["Ardia"])
 
         try links.connect(helium, hostPath: "/h", support: support)
@@ -161,8 +189,7 @@ import Testing
         let (support, links) = try setUp(["Google/Chrome"])
         defer { try? FileManager.default.removeItem(at: support) }
         try HostManifests.install(hostPath: "/h", support: support)
-        try FileManager.default.createDirectory(
-            at: support.appendingPathComponent("net.imput.helium"), withIntermediateDirectories: true)
+        try makeBrowserFolder("net.imput.helium", in: support)
         #expect(names(links.connectNew(hostPath: "/h", support: support)) == ["Helium"])
         #expect(links.autoConnect)
     }

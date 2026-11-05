@@ -25,18 +25,21 @@ public struct Browser: Equatable, Sendable {
     public let dataDirectory: String
     public let kind: Kind
     /// Directory under ~/Library/Application Support whose NativeMessagingHosts the browser reads:
-    /// its own for Chromium browsers, Mozilla's shared one for Firefox and its forks.
+    /// its own for most Chromium browsers, Mozilla's shared one for Firefox and its forks, another
+    /// browser's for one without its own (Search).
     public let manifestDirectory: String
     /// The app's bundle identifier: for its icon, and to tell which browser is asking. nil while
     /// unknown; the browser is then recognised by its name.
     public let bundleID: String?
 
-    public init(name: String, dataDirectory: String, kind: Kind, bundleID: String? = nil) {
+    public init(
+        name: String, dataDirectory: String, kind: Kind, bundleID: String? = nil, manifestDirectory: String? = nil
+    ) {
         self.name = name
         self.dataDirectory = dataDirectory
         self.kind = kind
         self.bundleID = bundleID
-        manifestDirectory = kind == .firefox ? "Mozilla" : dataDirectory
+        self.manifestDirectory = manifestDirectory ?? (kind == .firefox ? "Mozilla" : dataDirectory)
     }
 }
 
@@ -69,17 +72,32 @@ public enum HostManifests {
         Browser(
             name: "Ardia", dataDirectory: "com.ardia.browser/Chromium", kind: .chromium, bundleID: "com.ardia.browser"),
         Browser(name: "Yab", dataDirectory: "Yab/Chromium", kind: .chromium, bundleID: "dev.serafim.fast"),
+        // A WebKit browser that runs Chrome extensions. It has no NativeMessagingHosts folder of its
+        // own and reads Chrome's, Chromium's, Edge's, Brave's, Arc's and Vivaldi's. Chromium's is the
+        // least likely to be a browser the user has.
+        Browser(
+            name: "Search", dataDirectory: "Search", kind: .chromium, bundleID: "com.officecommun.search",
+            manifestDirectory: "Chromium"),
         Browser(name: "Firefox", dataDirectory: "Firefox", kind: .firefox, bundleID: "org.mozilla.firefox"),
         Browser(name: "Zen", dataDirectory: "zen", kind: .firefox, bundleID: "app.zen-browser.zen"),
     ]
 
     /// Browsers whose data directory exists under `support` (normally ~/Library/Application Support).
     public static func installed(in support: URL) -> [Browser] {
-        browsers.filter { browser in
-            var isDirectory: ObjCBool = false
-            let path = support.appendingPathComponent(browser.dataDirectory).path
-            return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+        browsers.filter { isInstalled($0, in: support) }
+    }
+
+    /// Whether `browser`'s data directory exists. One holding only a NativeMessagingHosts folder
+    /// doesn't count: that was made for manifests (ours for Search, or another app's), not by the
+    /// browser.
+    static func isInstalled(_ browser: Browser, in support: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        let path = support.appendingPathComponent(browser.dataDirectory).path
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return false
         }
+        let contents = Set((try? FileManager.default.contentsOfDirectory(atPath: path)) ?? [])
+        return contents.subtracting([".DS_Store"]) != ["NativeMessagingHosts"]
     }
 
     public static func directory(for browser: Browser, in support: URL) -> URL {

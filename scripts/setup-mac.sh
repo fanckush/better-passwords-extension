@@ -18,8 +18,10 @@ CHROMIUM_IDS="ocongmkplhijgajnipnhhggfcjfdilgj"
 FIREFOX_ID="better-passwords@fanckush.github.io"
 SUPPORT="$HOME/Library/Application Support"
 
-# Chromium-based browsers: the path of their user data directory under Application Support, and
-# their name. Keep in sync with HostManifests.browsers in the companion app.
+# Chromium-based browsers: the path of their user data directory under Application Support, their
+# name, and the directory whose NativeMessagingHosts they read when it isn't their own (Search, a
+# WebKit browser, has none and reads Chromium's among others). Keep in sync with
+# HostManifests.browsers in the companion app.
 BROWSERS="Google/Chrome|Google Chrome
 Google/Chrome Beta|Google Chrome Beta
 Google/Chrome Dev|Google Chrome Dev
@@ -34,7 +36,8 @@ Dia/User Data|Dia
 net.imput.helium|Helium
 Crest/Chromium|Crest
 com.ardia.browser/Chromium|Ardia
-Yab/Chromium|Yab"
+Yab/Chromium|Yab
+Search|Search|Chromium"
 REQUEST_URL="https://github.com/fanckush/better-passwords-extension/issues/new?template=browser.yml"
 
 uninstall=0
@@ -116,9 +119,23 @@ fi
 connected=""
 add_connected() { connected="$connected${connected:+, }$1"; }
 
-while IFS='|' read -r browser name; do
-    [ -d "$SUPPORT/$browser" ] || continue
-    dir="$SUPPORT/$browser/NativeMessagingHosts"
+# browser_installed DIR: the data directory exists and holds more than a NativeMessagingHosts
+# folder. One with only that was made for manifests (ours for Search, or another app's).
+browser_installed() {
+    [ -d "$1" ] || return 1
+    for entry in "$1"/* "$1"/.[!.]*; do
+        [ -e "$entry" ] || continue
+        case "${entry##*/}" in
+            NativeMessagingHosts | .DS_Store) ;;
+            *) return 0 ;;
+        esac
+    done
+    [ ! -d "$1/NativeMessagingHosts" ]
+}
+
+while IFS='|' read -r browser name manifests; do
+    browser_installed "$SUPPORT/$browser" || continue
+    dir="$SUPPORT/${manifests:-$browser}/NativeMessagingHosts"
     if [ "$uninstall" -eq 1 ]; then remove_manifest "$dir"; else write_manifest "$dir" allowed_origins "$origins"; fi
     add_connected "$name"
 done <<EOF
