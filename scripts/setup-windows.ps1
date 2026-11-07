@@ -31,6 +31,7 @@ function Invoke-BetterPasswordsSetup([bool]$Uninstall, [string[]]$ExtensionId, [
     $manifestDir = Join-Path $env:LOCALAPPDATA "Better Passwords\NativeMessagingHosts"
     $chromiumManifest = Join-Path $manifestDir "$hostName.json"
     $firefoxManifest = Join-Path $manifestDir "$hostName.firefox.json"
+    $firefoxLauncher = Join-Path $manifestDir "$hostName.firefox.bat"
     $storeUrl = "https://apps.microsoft.com/detail/9PKTQ5699M62"
 
     # Where browsers look up native messaging hosts, and which manifest each gets. Other Chromium
@@ -50,7 +51,7 @@ function Invoke-BetterPasswordsSetup([bool]$Uninstall, [string[]]$ExtensionId, [
                 Write-Host "  removed $($r.Key)"
             }
         }
-        foreach ($file in @($chromiumManifest, $firefoxManifest)) {
+        foreach ($file in @($chromiumManifest, $firefoxManifest, $firefoxLauncher)) {
             if (Test-Path -LiteralPath $file) {
                 Remove-Item -LiteralPath $file -Force
                 Write-Host "  removed $file"
@@ -107,11 +108,11 @@ function Invoke-BetterPasswordsSetup([bool]$Uninstall, [string[]]$ExtensionId, [
     if ($note) { Write-Host "Helper: $helper ($note)" } else { Write-Host "Helper: $helper" }
 
     $utf8 = New-Object System.Text.UTF8Encoding($false)
-    function Write-Manifest([string]$Path, [string]$AllowKey, [string[]]$Allowed) {
+    function Write-Manifest([string]$Path, [string]$AllowKey, [string[]]$Allowed, [string]$Target) {
         $manifest = [ordered]@{
             name = $hostName
             description = "Better Passwords: connects the extension to Apple's password helper"
-            path = $helper
+            path = $Target
             type = "stdio"
         }
         $manifest[$AllowKey] = [object[]]$Allowed
@@ -123,8 +124,25 @@ function Invoke-BetterPasswordsSetup([bool]$Uninstall, [string[]]$ExtensionId, [
 
     New-Item -ItemType Directory -Force -Path $manifestDir | Out-Null
     $origins = @($chromiumIds | ForEach-Object { "chrome-extension://$_/" })
-    Write-Manifest $chromiumManifest "allowed_origins" $origins
-    Write-Manifest $firefoxManifest "allowed_extensions" @($firefoxId)
+    Write-Manifest $chromiumManifest "allowed_origins" $origins $helper
+
+    # Firefox won't start a host whose path is a link, and the app execution alias is one. It does
+    # run .bat hosts through cmd.exe, which follows the alias (Chromium starts every host that way).
+    # cmd reads a .bat in the OEM code page, so the user's folder goes in as %LOCALAPPDATA%.
+    $target = $helper.Replace("%", "%%")
+    if ($helper.StartsWith("$env:LOCALAPPDATA\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        $target = "%LOCALAPPDATA%" + $helper.Substring($env:LOCALAPPDATA.Length).Replace("%", "%%")
+    }
+    $oem = [System.Text.Encoding]::ASCII
+    try {
+        $oem = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+    } catch {
+        # PowerShell without code-page encodings; the usual helper path is plain ASCII anyway
+        $oem = [System.Text.Encoding]::ASCII
+    }
+    [System.IO.File]::WriteAllText($firefoxLauncher, "@`"$target`" %*`r`n", $oem)
+    Write-Host "  wrote $firefoxLauncher"
+    Write-Manifest $firefoxManifest "allowed_extensions" @($firefoxId) $firefoxLauncher
 
     foreach ($r in $registrations) {
         New-Item -Path $r.Key -Force | Out-Null
