@@ -39,7 +39,7 @@ Visit [betterpasswords.app](https://betterpasswords.app) for an interactive dumm
 - ✨ NO MORE 6 DIGIT CODES!! *
 - 💾 asks to save/update new logins you type (obviously)
 - ☁️ generate Hide My Email in email fields (needs iCloud+)
-- 👤 suggest yoru email addresses from your contact card *
+- 👤 suggest your email addresses from your contact card *
 
 \* Needs [companion Mac app](docs/companion.md)
 
