@@ -5,12 +5,15 @@ export type Platform = "mac" | "windows" | "other";
 
 let detected: Promise<Platform> | undefined;
 
-/** The platform this browser runs on. Asked once; a browser that won't say counts as a Mac. */
+/**
+ * The platform this browser runs on. Asked once. Firefox's inline menu frame has no
+ * `runtime.getPlatformInfo`, so there the user agent's platform answers instead;
+ * one that says neither Windows nor anything else counts as a Mac.
+ */
 export function platform(): Promise<Platform> {
-  detected ??= browser.runtime
-    .getPlatformInfo()
-    .then(({ os }): Platform => (os === "mac" ? "mac" : os === "win" ? "windows" : "other"))
-    .catch((): Platform => "mac");
+  detected ??= (async () => (await browser.runtime.getPlatformInfo()).os)()
+    .then((os): Platform => (os === "mac" ? "mac" : os === "win" ? "windows" : "other"))
+    .catch((): Platform => (/^win/i.test(globalThis.navigator?.platform ?? "") ? "windows" : "mac"));
   return detected;
 }
 
