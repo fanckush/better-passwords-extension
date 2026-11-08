@@ -43,7 +43,7 @@ Visit [betterpasswords.app](https://betterpasswords.app) for an interactive dumm
 
 \* Needs [companion Mac app](docs/companion.md)
 
-## Installotion
+## Installation
 
 - **Chrome, Arc, Brave, Edge, Vivaldi and other Chromium browsers:** [Chrome Web Store][chrome-web-store]
 - **Firefox and Zen:** [Firefox Add-ons][firefox-addons]
