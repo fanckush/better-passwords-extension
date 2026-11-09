@@ -33,15 +33,19 @@ import {
   type SignInState,
   send,
 } from "@/src/messages.ts";
+import { frameOriginToFill } from "@/src/url-policy.ts";
 
 /** Omit for each member of a union. */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
-// Top frame only for now. Logins inside cross-origin iframes need their own origin rules.
+// The page, its own iframes and Apple's sign-in frame (see frameOriginToFill). Logins inside other
+// cross-origin iframes need their own origin rules.
 export default defineContentScript({
   matches: FILL_MATCHES,
+  allFrames: true,
   runAt: "document_idle",
   main(ctx) {
+    if (!frameOriginToFill()) return;
     const menu = new MenuHost(browser.runtime.getURL("/menu.html"), (above) =>
       tellMenu({ type: "menu-placement", above }),
     );
@@ -100,6 +104,15 @@ export default defineContentScript({
         menu.open(field, show, kind, nonce, { orGenerate: orGenerate ?? false });
       } else {
         menu.close();
+      }
+    }
+
+    /** Whether focus is somewhere in the page; a page of another origin (Apple's sign-in) can't say. */
+    function focusInPage(): boolean {
+      try {
+        return window.top?.document.hasFocus() ?? false;
+      } catch {
+        return false;
       }
     }
 
@@ -198,6 +211,12 @@ export default defineContentScript({
     );
     ctx.addEventListener(window, "scroll", () => menu.position(), { capture: true, passive: true });
     ctx.addEventListener(window, "resize", () => menu.position());
+    // a click outside an iframe never reaches it, but focus moving out to the page around it does
+    if (window !== window.top) {
+      ctx.addEventListener(window, "blur", () => {
+        if (menu.isOpen && document.activeElement !== menu.element && focusInPage()) menu.close();
+      });
+    }
     ctx.onInvalidated(() => menu.close());
 
     // Like Safari: a generated password is filled right away, and Apple Passwords is asked to save

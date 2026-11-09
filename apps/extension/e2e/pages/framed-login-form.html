@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title></title>
+    <style>
+      body { font: 16px system-ui; padding: 40px; }
+      input { display: block; margin: 8px 0 16px; padding: 6px; width: 260px; }
+    </style>
+  </head>
+  <body>
+    <!-- like Apple's sign-in: no form element, and the password waits under the account field -->
+    <h1>Sign in</h1>
+    <input id="user" type="text" autocomplete="username webauthn" />
+    <input id="pass" type="password" autocomplete="current-password" tabindex="-1" style="height: 19px; padding: 0" />
+    <button id="continue" type="button">Continue</button>
+  </body>
+</html>

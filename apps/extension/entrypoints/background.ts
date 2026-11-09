@@ -38,7 +38,7 @@ import { platform } from "@/src/platform.ts";
 import { Session } from "@/src/session/session.ts";
 import { toolbarAction } from "@/src/toolbar.ts";
 import { PendingUpdate } from "@/src/updates.ts";
-import { fillableUrl } from "@/src/url-policy.ts";
+import { fillableUrl, frameOriginToFill, isAppleSignInFrame, sameFillableOrigin } from "@/src/url-policy.ts";
 
 const KEEP_ALIVE = "keep-alive";
 
@@ -62,6 +62,8 @@ interface GeneratedLogin {
   formUsername: string;
   /** Whether Apple Passwords was asked already: once per generated password. */
   asked: boolean;
+  /** The frame it was filled in. */
+  frameId: number;
 }
 
 /** A login sent with a form (not a generated one), until the page moves on and it's saved (or dropped). */
@@ -72,10 +74,18 @@ interface SentLogin {
   saveAs: Promise<string | undefined>;
   /** The page is being asked whether the sign-in went through (the field went away while the tab navigated). */
   checking: boolean;
+  /** The frame it was sent from. */
+  frameId: number;
 }
 
 /** How long a sent login waits for the page to move on before it's forgotten. */
 const SENT_LOGIN_MS = 60_000;
+
+/**
+ * Tabs showing Apple's sign-in frame on another Apple site, with the frame's address. Those tabs are
+ * filled for the frame: it's the frame that gets the password, and the frame's site it's saved for.
+ */
+const appleSignIns = new Map<number, URL>();
 
 export default defineBackground(() => {
   // macOS kills Apple's helper in browsers Apple doesn't allow, and every try leaves a crash report
@@ -205,7 +215,7 @@ export default defineBackground(() => {
       for (const { id } of tabs) {
         if (id === undefined) continue;
         void browser.scripting
-          .executeScript({ target: { tabId: id }, files: (script.js ?? []) as ScriptPublicPath[] })
+          .executeScript({ target: { tabId: id, allFrames: true }, files: (script.js ?? []) as ScriptPublicPath[] })
           .catch(() => {});
       }
     }
@@ -247,7 +257,9 @@ export default defineBackground(() => {
    * Who sent a request. Extension pages may ask anything; when they live inside a tab (the inline
    * menu iframe), every tab-scoped request is bound to that tab, whatever `tabId` they pass.
    */
-  type Caller = { kind: "page"; tabId?: number } | { kind: "content-script"; tabId: number; url: string };
+  type Caller =
+    | { kind: "page"; tabId?: number }
+    | { kind: "content-script"; tabId: number; frameId: number; url: string };
 
   function tabOf(caller: Caller, requested?: number): number {
     const tabId = caller.tabId ?? requested;
@@ -255,26 +267,33 @@ export default defineBackground(() => {
     return tabId;
   }
 
-  function relay(tabId: number, message: ContentMessage) {
-    return browser.tabs.sendMessage(tabId, message, { frameId: 0 });
+  /** Sends a message to one frame: by default the one whose menu it's for, else the page itself. */
+  function relay(tabId: number, message: ContentMessage, frameId = menuFrame(tabId, message)) {
+    return browser.tabs.sendMessage(tabId, message, { frameId });
   }
 
-  // Nonces of the menus each tab's content script may show, newest last. Only our content script
-  // learns them; menu.html must present one of its tab's (see the onMessage listener).
-  const menuNonces = new Map<number, string[]>();
+  function menuFrame(tabId: number, message: ContentMessage): number {
+    const nonce = "nonce" in message ? message.nonce : undefined;
+    return menuNonces.get(tabId)?.find((menu) => menu.nonce === nonce)?.frameId ?? 0;
+  }
+
+  // Nonces of the menus each tab's content scripts may show, newest last, with the frame showing
+  // each. Only our content script learns them; menu.html must present one of its tab's (see the
+  // onMessage listener).
+  const menuNonces = new Map<number, { nonce: string; frameId: number }[]>();
   const MENU_NONCES_PER_TAB = 8;
 
-  function issueMenuNonce(tabId: number): string {
+  function issueMenuNonce(tabId: number, frameId: number): string {
     const nonce = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join(
       "",
     );
-    const nonces = [...(menuNonces.get(tabId) ?? []), nonce].slice(-MENU_NONCES_PER_TAB);
+    const nonces = [...(menuNonces.get(tabId) ?? []), { nonce, frameId }].slice(-MENU_NONCES_PER_TAB);
     menuNonces.set(tabId, nonces);
     return nonce;
   }
 
   function isMenuNonce(tabId: number, nonce: unknown): boolean {
-    return typeof nonce === "string" && (menuNonces.get(tabId)?.includes(nonce) ?? false);
+    return typeof nonce === "string" && (menuNonces.get(tabId)?.some((menu) => menu.nonce === nonce) ?? false);
   }
 
   async function autofillStatus(
@@ -286,7 +305,7 @@ export default defineBackground(() => {
     const { show } = await menuToShow(caller, kind, signIn);
     if (show === "none") return { show };
     const orGenerate = kind === "login" && unsure && (await getSettings()).generatePasswords;
-    return { show, nonce: issueMenuNonce(caller.tabId), ...(orGenerate ? { orGenerate } : {}) };
+    return { show, nonce: issueMenuNonce(caller.tabId, caller.frameId), ...(orGenerate ? { orGenerate } : {}) };
   }
 
   async function menuToShow(
@@ -396,6 +415,7 @@ export default defineBackground(() => {
     signedIn.delete(tabId);
     generatedByTab.delete(tabId);
     menuNonces.delete(tabId);
+    appleSignIns.delete(tabId);
     for (const key of generatedForMenu.keys()) if (key.startsWith(`${tabId}:`)) generatedForMenu.delete(key);
   });
 
@@ -440,6 +460,7 @@ export default defineBackground(() => {
       state: "unsaved",
       formUsername: context.username,
       asked: false,
+      frameId: menuFrame(tabId, fill),
     });
     unconfirmed.push({ hostname: url.hostname, username: context.username || (account ?? ""), password });
     return result;
@@ -462,6 +483,7 @@ export default defineBackground(() => {
     const generated = generatedByTab.get(tabId);
     if (generated && (change.url || change.status === "loading")) void saveGenerated(tabId, generated.formUsername);
     if (change.status === "complete" && sentLogins.has(tabId)) void saveSentLogin(tabId);
+    if (change.url) appleSignIns.delete(tabId);
   });
 
   /**
@@ -495,7 +517,8 @@ export default defineBackground(() => {
     generated.state = "saved";
     generated.username = username;
     if (confirmed) forget(generated.password);
-    void relay(tabId, { type: "generated-password-saved", password: generated.password }).catch(() => {});
+    const saved = { type: "generated-password-saved", password: generated.password } as const;
+    void relay(tabId, saved, generated.frameId).catch(() => {});
   }
 
   /**
@@ -517,6 +540,7 @@ export default defineBackground(() => {
       password,
       saveAs: accountToSave(url.hostname, username, caller.tabId),
       checking: false,
+      frameId: caller.frameId,
     };
     sentLogins.set(caller.tabId, login);
     const drop = () => {
@@ -558,7 +582,11 @@ export default defineBackground(() => {
       const username = await login.saveAs;
       if (username === undefined) return;
       for (let attempt = 0; attempt < 5 && sentLogins.get(tabId) === login; attempt++) {
-        const state = (await relay(tabId, { type: "sign-in-state" }).catch(() => undefined)) as SignInState | undefined;
+        const ask = { type: "sign-in-state" } as const;
+        // the frame that sent it may have gone with its page: then the page that loaded answers
+        const state = (await relay(tabId, ask, login.frameId)
+          .catch(() => relay(tabId, ask, 0))
+          .catch(() => undefined)) as SignInState | undefined;
         if (state === "watching") return;
         if (state) {
           sentLogins.delete(tabId);
@@ -796,13 +824,18 @@ export default defineBackground(() => {
       }
       case "fill": {
         const tabId = tabOf(caller, request.tabId);
+        const frames = await pageFrames(tabId);
         const result = await fillLogin(tabId, request.username, async (origin, password) => {
-          const [injection] = await browser.scripting.executeScript({
-            target: { tabId, frameIds: [0] },
-            func: fillCredentials,
-            args: [origin, request.username, password],
-          });
-          return String(injection?.result ?? "no-fields");
+          for (const frameId of frames) {
+            const [injection] = await browser.scripting.executeScript({
+              target: { tabId, frameIds: [frameId] },
+              func: fillCredentials,
+              args: [origin, request.username, password],
+            });
+            const filled = String(injection?.result ?? "no-fields");
+            if (filled !== "no-fields") return filled;
+          }
+          return "no-fields";
         });
         return { result };
       }
@@ -811,10 +844,13 @@ export default defineBackground(() => {
       case "fill-one-time-code": {
         const tabId = tabOf(caller, request.tabId);
         const { origin, code } = await oneTimeCodeDigits(tabId, request.id);
-        const reply = (await relay(tabId, { type: "fill-one-time-code", origin, code })) as
-          | { result: string }
-          | undefined;
-        return { result: reply?.result ?? "no-fields" };
+        for (const frameId of await pageFrames(tabId)) {
+          const reply = (await relay(tabId, { type: "fill-one-time-code", origin, code }, frameId).catch(
+            () => undefined,
+          )) as { result: string } | undefined;
+          if (reply && reply.result !== "no-fields") return { result: reply.result };
+        }
+        return { result: "no-fields" };
       }
       case "copy-one-time-code": {
         // the popup only: the inline menu lives inside the page, which needn't see the code
@@ -986,6 +1022,19 @@ export default defineBackground(() => {
     }
   }
 
+  /** The frames that may be filled for the tab, the page's own first. */
+  async function pageFrames(tabId: number): Promise<number[]> {
+    const url = await tabUrl(tabId);
+    const frames = await browser.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: frameOriginToFill,
+    });
+    return frames
+      .filter((frame) => url !== undefined && frame.result === url.origin)
+      .map((frame) => frame.frameId)
+      .sort((a, b) => a - b);
+  }
+
   /**
    * Fills `username`'s login with `fill`. A username-only step (a multi-step sign-in) gets just the
    * username, and the choice is remembered for the next step; the password is read (macOS may ask
@@ -1069,11 +1118,18 @@ export default defineBackground(() => {
       caller = sender.tab?.id === undefined ? { kind: "page" } : { kind: "page", tabId: sender.tab.id };
     } else if (
       sender.tab?.id !== undefined &&
-      sender.frameId === 0 &&
+      sender.frameId !== undefined &&
       sender.url &&
+      // the page, one of its own iframes (which also checks every frame around it), or Apple's sign-in
+      (sender.frameId === 0 ||
+        sameFillableOrigin(sender.url, sender.tab.url) ||
+        isAppleSignInFrame(sender.url, sender.tab.url)) &&
       CONTENT_SCRIPT_REQUESTS.has(request.type)
     ) {
-      caller = { kind: "content-script", tabId: sender.tab.id, url: sender.url };
+      if (sender.frameId !== 0 && isAppleSignInFrame(sender.url, sender.tab.url)) {
+        appleSignIns.set(sender.tab.id, new URL(sender.url));
+      }
+      caller = { kind: "content-script", tabId: sender.tab.id, frameId: sender.frameId, url: sender.url };
     } else {
       return false;
     }
@@ -1092,7 +1148,7 @@ export default defineBackground(() => {
 
 async function tabUrl(tabId: number): Promise<URL | undefined> {
   const tab = await browser.tabs.get(tabId);
-  return fillableUrl(tab.url);
+  return appleSignIns.get(tabId) ?? fillableUrl(tab.url);
 }
 
 async function getSettings(): Promise<Settings> {
