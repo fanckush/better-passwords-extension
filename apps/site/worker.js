@@ -4,8 +4,10 @@
 
 const REPO = "fanckush/better-passwords-extension";
 const RELEASES = `https://github.com/${REPO}/releases`;
-/** GitHub is asked at most this often per route; unauthenticated API calls are rate limited. */
+/** GitHub is asked at most this often per route. */
 const CACHE_SECONDS = 600;
+/** A release gets its files a moment after its tag, so the routes fall back to the releases before it. */
+const TRIES = 3;
 
 export default {
   async fetch(request, env, ctx) {
@@ -26,38 +28,48 @@ async function cached(url, ctx, respond) {
 }
 
 async function downloadMac() {
-  const release = await latestCompanionRelease().catch(() => undefined);
-  // 1.0.0 shipped a zip
-  const file = asset(release, "-mac.dmg") ?? asset(release, "-mac.zip");
+  // GitHub redirects a release file that exists to its storage, and answers 404 otherwise
+  const dmg = await newest((version) => `better-passwords-${version}-mac.dmg`, { method: "HEAD", redirect: "manual" });
   // no release yet, or GitHub is unreachable: the release list is the next best place
-  if (!file) return Response.redirect(RELEASES, 302);
+  if (!dmg) return Response.redirect(RELEASES, 302);
   return new Response(null, {
     status: 302,
-    headers: { Location: file, "Cache-Control": `public, max-age=${CACHE_SECONDS}` },
+    headers: { Location: dmg.url, "Cache-Control": `public, max-age=${CACHE_SECONDS}` },
   });
 }
 
 // Served rather than redirected, so the address the app knows never changes. Sparkle checks the
 // appcast's signature, so this copy needs no more trust than GitHub's.
 async function appcast() {
-  const release = await latestCompanionRelease().catch(() => undefined);
-  const file = asset(release, "appcast.xml");
-  const res = file ? await fetch(file).catch(() => undefined) : undefined;
-  if (!res?.ok) return new Response("No appcast yet.", { status: 404 });
-  return new Response(res.body, {
+  const file = await newest(() => "appcast.xml");
+  if (!file) return new Response("No appcast yet.", { status: 404 });
+  return new Response(file.response.body, {
     headers: { "Content-Type": "application/xml", "Cache-Control": `public, max-age=${CACHE_SECONDS}` },
   });
 }
 
-function asset(release, suffix) {
-  return release?.assets.find((a) => a.name.endsWith(suffix))?.browser_download_url;
+/** The newest companion release that has this file: the file's address, and GitHub's answer for it. */
+async function newest(name, init) {
+  for (const version of (await companionVersions()).slice(0, TRIES)) {
+    const url = `${RELEASES}/download/companion-v${version}/${name(version)}`;
+    const response = await fetch(url, init).catch(() => undefined);
+    if (response?.ok || response?.status === 302) return { url, response };
+  }
+  return undefined;
 }
 
-// GitHub's releases/latest is the extension's, so look up the newest companion-v* release.
-async function latestCompanionRelease() {
-  const res = await fetch(`https://api.github.com/repos/${REPO}/releases?per_page=50`, {
-    headers: { Accept: "application/vnd.github+json", "User-Agent": "betterpasswords.app" },
-  });
-  if (!res.ok) return undefined;
-  return (await res.json()).find((r) => !r.draft && !r.prerelease && r.tag_name.startsWith("companion-v"));
+// The companion's versions, newest first, from its companion-v* tags. GitHub's releases/latest is the
+// extension's, and its REST API is no use here: Workers share Cloudflare's addresses, so the API's limit
+// for callers without a token (60 an hour per address) is always used up. The tag list git itself
+// reads has no such limit.
+async function companionVersions() {
+  const res = await fetch(`https://github.com/${REPO}.git/info/refs?service=git-upload-pack`, {
+    headers: { "User-Agent": "betterpasswords.app" },
+  }).catch(() => undefined);
+  if (!res?.ok) return [];
+  const tags = (await res.text()).matchAll(/refs\/tags\/companion-v(\d+)\.(\d+)\.(\d+)$/gm);
+  return [...tags]
+    .map((tag) => tag.slice(1, 4).map(Number))
+    .sort((a, b) => b[0] - a[0] || b[1] - a[1] || b[2] - a[2])
+    .map((version) => version.join("."));
 }
