@@ -1,6 +1,6 @@
 import { FakeHelper, MemoryTransport, totp } from "@app/fake-helper";
 import { describe, expect, it, vi } from "vitest";
-import { ApplePasswordsClient, Command, type HelperMessage, QueryStatus } from "../src/index.ts";
+import { Action, ApplePasswordsClient, Command, type HelperMessage, QueryStatus, SecureChannel } from "../src/index.ts";
 
 const SECRET = "JBSWY3DPEHPK3PXP";
 const NOW = 1_800_000_000_000;
@@ -50,6 +50,37 @@ describe("verification codes", () => {
     const { codes } = await client.getOneTimeCodes(page, tab, "bob");
     expect(codes.map((c) => c.username)).toEqual(["bob"]);
     expect(helper.oneTimeCodeReads).toEqual([{ frameURLs: page, username: "bob" }]);
+  });
+
+  it("uses Search for targeted codes and GhostSearch for the existing list", async () => {
+    const { client } = await setup();
+    const encryptRequest = vi.spyOn(SecureChannel.prototype, "encryptRequest");
+
+    await client.searchOneTimeCodes(page, tab, "bob");
+    expect(encryptRequest).toHaveBeenLastCalledWith({
+      ACT: Action.Search,
+      TYPE: "oneTimeCodes",
+      frameURLs: page,
+      username: "bob",
+    });
+
+    await client.getOneTimeCodes(page, tab, "bob");
+    expect(encryptRequest).toHaveBeenLastCalledWith({
+      ACT: Action.GhostSearch,
+      TYPE: "oneTimeCodes",
+      frameURLs: page,
+      username: "bob",
+    });
+    encryptRequest.mockRestore();
+  });
+
+  it("does not send a targeted search without a username", async () => {
+    const { helper, client } = await setup();
+    await expect(client.searchOneTimeCodes(page, tab, "")).resolves.toEqual({
+      codes: [],
+      requiresAuthentication: false,
+    });
+    expect(helper.oneTimeCodeReads).toEqual([]);
   });
 
   it("returns nothing for a page without codes", async () => {
