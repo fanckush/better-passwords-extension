@@ -32,7 +32,7 @@ import {
   PasswordRulesError,
   type Suggestion,
 } from "@/src/passwords/generate.ts";
-import { oneTimeCodeId, oneTimeCodeViews } from "@/src/passwords/one-time-codes.ts";
+import { findOneTimeCodes, oneTimeCodeId, oneTimeCodeViews } from "@/src/passwords/one-time-codes.ts";
 import { withSiteRules } from "@/src/passwords/site-rules.ts";
 import { waitForLogin } from "@/src/passwords/wait-for-login.ts";
 import { platform } from "@/src/platform.ts";
@@ -1062,22 +1062,10 @@ export default defineBackground(() => {
     return filled;
   }
 
-  /** Finds codes for the tab. The Windows helper may require an explicit search for each account. */
-  async function lookupOneTimeCodes(url: URL, tabId: number, client: ApplePasswordsClient): Promise<OneTimeCode[]> {
-    const frameURLs = [url.href];
-    // Use a stand-in tab so an unsolicited update for the real tab cannot match the request.
-    const { codes } = await client.getOneTimeCodes(frameURLs, PROBE_TAB);
-    if (codes.length > 0 || !client.capabilities.canFillOneTimeCodes || (await platform()) !== "windows") return codes;
-
-    const tab = { tabId, frameId: 0 };
-    const logins = await client.getLogins(url.hostname, tab);
-    const usernames = new Set(logins.map(({ username }) => username).filter(Boolean));
-    const matches: OneTimeCode[] = [];
-    for (const username of usernames) {
-      const result = await client.searchOneTimeCodes(frameURLs, tab, username);
-      matches.push(...result.codes.filter((code) => code.username === username));
-    }
-    return matches;
+  /** The codes for a page, asked for a stand-in tab, like logins (see PROBE_TAB). */
+  async function lookupOneTimeCodes(url: URL, client: ApplePasswordsClient): Promise<OneTimeCode[]> {
+    const windows = (await platform()) === "windows";
+    return findOneTimeCodes(client, [url.href], PROBE_TAB, windows, () => usernamesFor(url.hostname));
   }
 
   /** The tab's verification codes, without digits. */
@@ -1085,7 +1073,7 @@ export default defineBackground(() => {
     const url = await tabUrl(tabId);
     if (!url) return { codes: [] };
     const client = await session.unlockedClient();
-    const codes = await lookupOneTimeCodes(url, tabId, client);
+    const codes = await lookupOneTimeCodes(url, client);
     const current = signedInAs(tabId, url.hostname);
     return {
       hostname: url.hostname,
@@ -1102,7 +1090,7 @@ export default defineBackground(() => {
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
     const client = await session.unlockedClient();
-    const codes = await lookupOneTimeCodes(url, tabId, client);
+    const codes = await lookupOneTimeCodes(url, client);
     const chosen = codes.find((code) => oneTimeCodeId(code) === id);
     if (!chosen) throw new Error("that verification code is no longer saved");
     const code = await client.currentOneTimeCode(chosen, [url.href], { tabId });

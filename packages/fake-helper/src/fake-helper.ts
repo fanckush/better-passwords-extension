@@ -49,7 +49,8 @@ export interface FakeHelperOptions {
   base64?: boolean;
   /**
    * Answer like iCloud for Windows' helper: hex encoding, no `shouldUseBase64` in the capabilities,
-   * and the handshake's MSG as a string ("MSG": "1").
+   * the handshake's MSG as a string ("MSG": "1"), and verification codes listed only when asked
+   * for one account (Search with its username), never for a whole site.
    */
   windows?: boolean;
   capabilities?: Capabilities;
@@ -247,7 +248,7 @@ export class FakeHelper {
    * withholds the digits while authentication is required, as the real helper does.
    */
   async #oneTimeCodes(message: HelperMessage): Promise<HelperMessage[]> {
-    const opened = await this.#open<{ TYPE?: string; frameURLs?: string[]; username?: string }>(message);
+    const opened = await this.#open<{ ACT?: number; TYPE?: string; frameURLs?: string[]; username?: string }>(message);
     if (!opened) return [{ cmd: message.cmd, payload: { SMSG: JSON.stringify({ TID: "", SDATA: "" }) } }];
     const { session, request } = opened;
     const frameURLs = request.frameURLs ?? [];
@@ -258,6 +259,8 @@ export class FakeHelper {
       return [await this.#reply(session, message, message.cmd, { STATUS: QueryStatus.InvalidParam })];
     }
     const hostnames = new Set(frameURLs.flatMap((url) => (URL.canParse(url) ? [new URL(url).hostname] : [])));
+    // iCloud for Windows finds a site's codes only when asked about one account
+    if (this.#windows && (request.ACT !== Action.Search || !request.username)) hostnames.clear();
     const entries: OneTimeCodeEntry[] = [];
     for (const e of this.vault) {
       if (!e.totp || !hostnames.has(e.hostname)) continue;

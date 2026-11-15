@@ -87,7 +87,8 @@ iCloud for Windows' `iCloudPasswordsExtensionHelper.exe` (version 15.10.39.0) ha
 - Its PAKE replies send `MSG` as a string (`"1"`, `"3"`) where macOS sends a number. The client reads `MSG`, `PROTO` and `ErrCode` either way (`pakeNumber` in `client.ts`), and the fake helper's `windows` option answers like this.
 - It doesn't advertise `canSaveAccountWithEmptyUserName`.
 - It never asks for Windows Hello or a password before giving out a password or a code, so the extension locks when the PC locks by default there (`defaultSettings` in `src/messages.ts`).
+- It lists verification codes only for one account at a time. A listing (cmd 16) finds a code only with `ACT: 2` (search) and that account's `username`. The site-wide listing (`ACT: 5`) returns `STATUS: 3` (no results), with or without a username, and so does `ACT: 2` without one. Apple's own extension only sends the site-wide listing, so it shows no codes on Windows. When that listing comes back empty on Windows, we list the site's logins and search for each account's codes (`findOneTimeCodes` in `src/passwords/one-time-codes.ts`). Filling (cmd 17, `ACT: 2` with the username) works as on macOS. Checked against the live helper with a GitHub code. The fake helper's `windows` option answers the same way.
 
-Saving logins and verification codes haven't been checked on Windows yet.
+Saving logins hasn't been checked on Windows yet.
 
 The helper shows the pairing code in its own window. No check of the calling extension's ID was found: like on macOS, only the host manifest's allowed IDs decide which extension may start it.
