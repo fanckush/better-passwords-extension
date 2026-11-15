@@ -317,18 +317,14 @@ export class ApplePasswordsClient {
    * codes are never asked.
    */
   getOneTimeCodes(frameURLs: string[], tab: Tab, username?: string): Promise<OneTimeCodes> {
-    return this.#serialized("codes", async () => {
-      if (!this.#capabilities.canFillOneTimeCodes) return { codes: [], requiresAuthentication: false };
-      const reply = await this.#query<OneTimeCodeEntry>(Command.GetOneTimeCodes, undefined, tab, {
-        ACT: Action.GhostSearch,
-        TYPE: ONE_TIME_CODES_TYPE,
-        frameURLs,
-        ...(username ? { username } : {}),
-      });
-      return {
-        codes: (Array.isArray(reply.Entries) ? reply.Entries : []).flatMap(toOneTimeCode),
-        requiresAuthentication: reply.RequiresUserAuthenticationToFill === true,
-      };
+    return this.#serialized("codes", () => this.#readOneTimeCodes(frameURLs, tab, Action.GhostSearch, username));
+  }
+
+  /** Searches one account's verification codes. Windows helpers require Search with a username. */
+  searchOneTimeCodes(frameURLs: string[], tab: Tab, username: string): Promise<OneTimeCodes> {
+    return this.#serialized("codes", () => {
+      if (!username) return Promise.resolve({ codes: [], requiresAuthentication: false });
+      return this.#readOneTimeCodes(frameURLs, tab, Action.Search, username);
     });
   }
 
@@ -424,6 +420,25 @@ export class ApplePasswordsClient {
     if (result.STATUS === QueryStatus.NoResults) return { ...result, Entries: [] };
     if (result.STATUS === QueryStatus.InvalidSession) this.#lock();
     throw new ProtocolError(`helper query failed (status ${result.STATUS})`, "query-failed");
+  }
+
+  async #readOneTimeCodes(
+    frameURLs: string[],
+    tab: Tab,
+    action: (typeof Action)[keyof typeof Action],
+    username?: string,
+  ): Promise<OneTimeCodes> {
+    if (!this.#capabilities.canFillOneTimeCodes) return { codes: [], requiresAuthentication: false };
+    const reply = await this.#query<OneTimeCodeEntry>(Command.GetOneTimeCodes, undefined, tab, {
+      ACT: action,
+      TYPE: ONE_TIME_CODES_TYPE,
+      frameURLs,
+      ...(username ? { username } : {}),
+    });
+    return {
+      codes: (Array.isArray(reply.Entries) ? reply.Entries : []).flatMap(toOneTimeCode),
+      requiresAuthentication: reply.RequiresUserAuthenticationToFill === true,
+    };
   }
 
   /** An encrypted, tab-scoped request. */
