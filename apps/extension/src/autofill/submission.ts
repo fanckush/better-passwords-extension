@@ -83,3 +83,18 @@ export function submittedScope(target: EventTarget | null, key?: string): Parent
   }
   return undefined;
 }
+
+/**
+ * Whether a submit event comes from the user, so a sign-in it sends may be offered for saving. A
+ * page's own script can send a form at any time; without this, it could make Apple Passwords offer
+ * to save or update a password of its choosing. A script that sends the form in answer to the
+ * user (a click or Enter handled in script, then requestSubmit) still counts: the page has
+ * transient user activation then. Without the userActivation API, nothing changes.
+ */
+export function isUserSubmit(
+  event: Pick<Event, "isTrusted">,
+  activation: { isActive: boolean } | undefined = (navigator as { userActivation?: { isActive: boolean } })
+    .userActivation,
+): boolean {
+  return event.isTrusted || (activation?.isActive ?? true);
+}

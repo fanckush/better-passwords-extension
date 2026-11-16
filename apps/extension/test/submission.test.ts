@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { isGone, isUsernameInput, sentLogin, submittedScope, watchUntilGone } from "../src/autofill/submission.ts";
+import {
+  isGone,
+  isUsernameInput,
+  isUserSubmit,
+  sentLogin,
+  submittedScope,
+  watchUntilGone,
+} from "../src/autofill/submission.ts";
 
 beforeEach(() => {
   // happy-dom has no layout; treat everything as visible unless marked hidden
@@ -110,5 +117,23 @@ describe("submittedScope", () => {
     document.body.innerHTML = `<form><input id="p" type="password"><p id="text">Forgot?</p></form>`;
     expect(submittedScope($("#p"), "Enter")).toBe($("form"));
     expect(submittedScope($("#text"))).toBeUndefined();
+  });
+});
+
+describe("isUserSubmit", () => {
+  it("accepts a form the user sent", () => {
+    expect(isUserSubmit({ isTrusted: true }, { isActive: false })).toBe(true);
+  });
+
+  it("accepts a script's submit in answer to the user", () => {
+    expect(isUserSubmit({ isTrusted: false }, { isActive: true })).toBe(true);
+  });
+
+  it("ignores a script's submit with no user action behind it", () => {
+    expect(isUserSubmit({ isTrusted: false }, { isActive: false })).toBe(false);
+  });
+
+  it("keeps accepting submits where the browser can't tell", () => {
+    expect(isUserSubmit({ isTrusted: false }, undefined)).toBe(true);
   });
 });

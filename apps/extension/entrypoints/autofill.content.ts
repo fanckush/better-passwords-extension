@@ -11,6 +11,7 @@ import { MenuHost } from "@/src/autofill/menu-host.ts";
 import {
   isGone,
   isUsernameInput,
+  isUserSubmit,
   type SentLogin,
   sentLogin,
   submittedScope,
@@ -276,7 +277,14 @@ export default defineContentScript({
         void send({ type: "login-form-gone" }).catch(() => {});
       });
     }
-    ctx.addEventListener(document, "submit", (event) => noteSent(event.target as HTMLFormElement), { capture: true });
+    ctx.addEventListener(
+      document,
+      "submit",
+      (event) => {
+        if (isUserSubmit(event)) noteSent(event.target as HTMLFormElement);
+      },
+      { capture: true },
+    );
     ctx.addEventListener(
       document,
       "click",
