@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "wxt";
 import { DISPLAY_NAME, EXTENSION_PUBLIC_KEY, FILL_MATCHES, FIREFOX_EXTENSION_ID, STORE_TITLE } from "./src/config.ts";
 
+const EXTENSION_CSP =
+  "default-src 'self'; script-src 'self'; object-src 'none'; img-src 'self' data:; " +
+  "connect-src 'self' https://*.icloud.com";
+
 export default defineConfig({
   outDirTemplate: "{{browser}}-mv{{manifestVersion}}{{modeSuffix}}",
   hooks: {
@@ -85,6 +89,9 @@ export default defineConfig({
         },
       ],
       action: { default_title: DISPLAY_NAME },
+      // Extension pages and the worker load only our own code and reach only iCloud (Hide My
+      // Email), so a future bug or a hijacked dependency can't send data anywhere else.
+      content_security_policy: browser === "firefox" ? EXTENSION_CSP : { extension_pages: EXTENSION_CSP },
       ...(browser === "firefox"
         ? {
             browser_specific_settings: {
