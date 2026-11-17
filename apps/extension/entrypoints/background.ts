@@ -366,7 +366,7 @@ export default defineBackground(() => {
   const generatedByTab = new Map<number, GeneratedLogin>();
   // Filled passwords Apple Passwords may not have (not saved yet, declined, or an update that
   // can't be confirmed), kept in memory until the session ends for the popup to show.
-  const unconfirmed: { hostname: string; username: string; password: string }[] = [];
+  const unconfirmed: { id: string; hostname: string; username: string; password: string }[] = [];
   // Logins chosen on a username-only step, by hostname: a sign-in's next step (the password, same
   // tab) lists it alone, and a password reset (any tab: the link opens a new one) saves for it.
   // Only the username is kept, briefly, and forgotten once used: rather no guess than a stale one.
@@ -463,13 +463,34 @@ export default defineBackground(() => {
       asked: false,
       frameId: menuFrame(tabId, fill),
     });
-    unconfirmed.push({ hostname: url.hostname, username: context.username || (account ?? ""), password });
+    unconfirmed.push({
+      id: crypto.randomUUID(),
+      hostname: url.hostname,
+      username: context.username || (account ?? ""),
+      password,
+    });
     return result;
   }
 
   function forget(password: string) {
     const index = unconfirmed.findIndex((entry) => entry.password === password);
     if (index >= 0) unconfirmed.splice(index, 1);
+  }
+
+  /**
+   * Asks Apple Passwords to save a password from the popup's list. A new login confirms the save
+   * and leaves the list; an update can't be seen, so it stays, as after the page's own ask.
+   */
+  async function saveUnconfirmed(tabId: number, entry: (typeof unconfirmed)[number]) {
+    const { hostname, username, password } = entry;
+    const before = await usernamesFor(hostname);
+    const client = await session.unlockedClient();
+    await client.savePassword({ hostname, username, password }, { tabId, frameId: 0 });
+    if (username !== "" && before.includes(username)) return;
+    // the popup may close while macOS asks: this carries on without it
+    void waitForLogin(() => usernamesFor(hostname), username, before).then((saved) => {
+      if (saved !== undefined) forget(password);
+    });
   }
 
   /** The username next to the generated password, as the user types it. */
@@ -912,10 +933,20 @@ export default defineBackground(() => {
         return { result: await fillGenerated(tabId, request.nonce, chosen, passwords.account) };
       }
       case "unconfirmed-passwords": {
-        const url = await tabUrl(tabOf(caller, request.tabId));
+        if (caller.tabId !== undefined) throw new Error("not allowed");
+        const url = await tabUrl(request.tabId);
         return unconfirmed
           .filter((entry) => entry.hostname === url?.hostname)
-          .map(({ username, password }) => ({ username, password }));
+          .map(({ id, username }) => ({ id, username }));
+      }
+      case "save-unconfirmed-password": {
+        // the popup only, like copying a code: the page never asks to save on the user's behalf
+        if (caller.tabId !== undefined) throw new Error("not allowed");
+        const url = await tabUrl(request.tabId);
+        const entry = unconfirmed.find((e) => e.id === request.id && e.hostname === url?.hostname);
+        if (!entry) throw new Error("That password is gone. It was saved, or the extension locked.");
+        await saveUnconfirmed(request.tabId, entry);
+        return null;
       }
       case "generated-username":
       case "generated-form-gone":

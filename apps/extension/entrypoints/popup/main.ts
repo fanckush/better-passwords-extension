@@ -416,13 +416,14 @@ async function oneTimeCodes(tabId: number) {
 }
 
 /**
- * Generated passwords that replaced a saved one on this site. Apple's helper can't confirm the
- * update, so if the user didn't click Update Password, this is where the new password still is.
+ * Generated passwords Apple Passwords may not have yet: an update it can't confirm, or a save the
+ * user declined. Save asks macOS again; the password itself never reaches the popup.
  */
 async function unconfirmedPasswords(tabId: number | undefined) {
   if (tabId === undefined) return null;
   const entries = await send({ type: "unconfirmed-passwords", tabId }).catch(() => []);
   if (entries.length === 0) return null;
+  const note = h("p", { class: "hint" }, "New passwords from this session, in case one wasn't saved.");
   return h(
     "section",
     { class: "recent" },
@@ -430,16 +431,25 @@ async function unconfirmedPasswords(tabId: number | undefined) {
     h(
       "ul",
       { class: "card" },
-      ...entries.map(({ username, password }) => {
-        const copy = h("button", { class: "secondary", textContent: "Copy" });
-        copy.addEventListener("click", async () => {
-          await navigator.clipboard.writeText(password);
-          copy.textContent = "Copied";
+      ...entries.map(({ id, username }) => {
+        const save = h("button", { class: "secondary", textContent: "Save" });
+        save.addEventListener("click", async () => {
+          save.disabled = true;
+          try {
+            await send({ type: "save-unconfirmed-password", tabId, id });
+            note.className = "hint";
+            note.textContent = "If Passwords already has it, macOS won't ask.";
+          } catch (e) {
+            note.className = "hint error";
+            note.textContent = messageOf(e);
+          } finally {
+            save.disabled = false;
+          }
         });
-        return h("li", { class: "actions" }, h("span", { textContent: username || "(no username)" }), copy);
+        return h("li", { class: "actions" }, h("span", { textContent: username || "(no username)" }), save);
       }),
     ),
-    h("p", { class: "hint" }, "New passwords from this session, in case one wasn't saved."),
+    note,
   );
 }
 

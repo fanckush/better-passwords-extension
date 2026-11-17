@@ -61,7 +61,9 @@ export type Request =
   /** Tries Apple's helper again after macOS blocked it in this browser (see SessionState). */
   | { type: "retry-connection" }
   /** Generated passwords for the tab's site whose update Apple Passwords couldn't confirm. */
-  | { type: "unconfirmed-passwords"; tabId?: number }
+  | { type: "unconfirmed-passwords"; tabId: number }
+  /** Asks Apple Passwords again to save one of them (from the popup); macOS shows its prompt. */
+  | { type: "save-unconfirmed-password"; tabId: number; id: string }
 
   /** Opens Apple's Passwords app, searching for the tab's site when there is one. */
   | { type: "open-passwords-app"; tabId?: number }
@@ -247,7 +249,9 @@ interface Responses {
   /** `unavailable`: why the site's rules leave nothing worth suggesting. */
   "generate-passwords": GeneratedPasswords | { unavailable: string };
   "use-generated-password": { result: NewPasswordResult };
-  "unconfirmed-passwords": { username: string; password: string }[];
+  /** Without the passwords: the popup only shows who they're for. */
+  "unconfirmed-passwords": { id: string; username: string }[];
+  "save-unconfirmed-password": null;
   "email-suggestions": EmailSuggestions;
   "enable-hide-my-email": EmailSuggestions;
   "dismiss-hide-my-email-hint": null;

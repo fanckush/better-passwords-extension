@@ -320,6 +320,39 @@ test.describe("when the user doesn't save", () => {
   });
 });
 
+test("an extension page inside a tab can't list or save the popup's recent passwords", async ({
+  context,
+  siteUrl,
+  popupUrl,
+  helperSaves,
+}) => {
+  const page = await context.newPage();
+  await page.goto(`${siteUrl}/signup.html`);
+  await page.locator("#email").fill("recent@example.com");
+  await fillStrongPassword(page);
+  // like the inline menu, a page in a tab is bound to its own tab: the list is the popup's alone
+  const inTab = await context.newPage();
+  await inTab.goto(popupUrl);
+  const replies = await inTab.evaluate(async () => {
+    const { chrome } = globalThis as unknown as {
+      chrome: {
+        runtime: { sendMessage(m: unknown): Promise<{ ok: boolean; error?: string }> };
+        tabs: { query(q: unknown): Promise<{ id: number }[]> };
+      };
+    };
+    const [site] = await chrome.tabs.query({ url: "http://localhost/*" });
+    return Promise.all([
+      chrome.runtime.sendMessage({ type: "unconfirmed-passwords", tabId: site?.id }),
+      chrome.runtime.sendMessage({ type: "save-unconfirmed-password", tabId: site?.id, id: "x" }),
+    ]);
+  });
+  expect(replies).toMatchObject([
+    { ok: false, error: "not allowed" },
+    { ok: false, error: "not allowed" },
+  ]);
+  await expectNoSave(page, helperSaves);
+});
+
 test("typing a password of one's own closes the suggestions", async ({ context, siteUrl }) => {
   const page = await context.newPage();
   await page.goto(`${siteUrl}/signup.html`);
