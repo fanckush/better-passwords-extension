@@ -7,7 +7,7 @@ import { DISPLAY_NAME, EXTENSION_PUBLIC_KEY, FILL_MATCHES, FIREFOX_EXTENSION_ID,
 
 const EXTENSION_CSP =
   "default-src 'self'; script-src 'self'; object-src 'none'; img-src 'self' data:; " +
-  "connect-src 'self' https://*.icloud.com";
+  "connect-src 'self' https://*.icloud.com; frame-src 'self' betterpasswords:";
 
 export default defineConfig({
   outDirTemplate: "{{browser}}-mv{{manifestVersion}}{{modeSuffix}}",
