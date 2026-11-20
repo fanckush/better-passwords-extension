@@ -72,6 +72,7 @@ public enum HostManifests {
         Browser(
             name: "Ardia", dataDirectory: "com.ardia.browser/Chromium", kind: .chromium, bundleID: "com.ardia.browser"),
         Browser(name: "Yab", dataDirectory: "Yab/Chromium", kind: .chromium, bundleID: "dev.serafim.fast"),
+        Browser(name: "Stedding", dataDirectory: "Stedding", kind: .chromium, bundleID: "dev.stedding.Stedding"),
         // A WebKit browser that runs Chrome extensions. It has no NativeMessagingHosts folder of its
         // own and reads Chrome's, Chromium's, Edge's, Brave's, Arc's and Vivaldi's. Chromium's is the
         // least likely to be a browser the user has.

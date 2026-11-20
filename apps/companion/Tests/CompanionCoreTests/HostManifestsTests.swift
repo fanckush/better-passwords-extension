@@ -262,6 +262,7 @@ func makeBrowserFolder(_ path: String, in support: URL) throws {
 
     @Test func recognisesBrowsersByBundleIDOrName() {
         #expect(HostManifests.browser(bundleID: "com.ardia.browser", name: "Ardia")?.name == "Ardia")
+        #expect(HostManifests.browser(bundleID: "dev.stedding.Stedding", name: "Stedding")?.name == "Stedding")
         #expect(HostManifests.browser(bundleID: "com.example.unknown", name: "Crest")?.name == "Crest")
         // a name alone doesn't stand in for a browser whose identifier is known
         #expect(HostManifests.browser(bundleID: "com.example.fake", name: "Google Chrome") == nil)

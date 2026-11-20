@@ -37,6 +37,7 @@ net.imput.helium|Helium
 Crest/Chromium|Crest
 com.ardia.browser/Chromium|Ardia
 Yab/Chromium|Yab
+Stedding|Stedding
 Search|Search|Chromium
 Orion|Orion|Google/Chrome"
 REQUEST_URL="https://github.com/fanckush/better-passwords-extension/issues/new?template=browser.yml"
