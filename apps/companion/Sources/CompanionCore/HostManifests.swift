@@ -26,7 +26,7 @@ public struct Browser: Equatable, Sendable {
     public let kind: Kind
     /// Directory under ~/Library/Application Support whose NativeMessagingHosts the browser reads:
     /// its own for most Chromium browsers, Mozilla's shared one for Firefox and its forks, another
-    /// browser's for one without its own (Search).
+    /// browser's for one without its own (Search, Orion).
     public let manifestDirectory: String
     /// The app's bundle identifier: for its icon, and to tell which browser is asking. nil while
     /// unknown; the browser is then recognised by its name.
@@ -78,6 +78,12 @@ public enum HostManifests {
         Browser(
             name: "Search", dataDirectory: "Search", kind: .chromium, bundleID: "com.officecommun.search",
             manifestDirectory: "Chromium"),
+        // Kagi's WebKit browser, which runs Chrome and Firefox extensions. It has no
+        // NativeMessagingHosts folder of its own and reads Chrome's, Brave's, Edge's, Opera's and
+        // Mozilla's. It doesn't check allowed_origins, so Chrome's manifests serve it as they are.
+        Browser(
+            name: "Orion", dataDirectory: "Orion", kind: .chromium, bundleID: "com.kagi.kagimacOS",
+            manifestDirectory: "Google/Chrome"),
         Browser(name: "Firefox", dataDirectory: "Firefox", kind: .firefox, bundleID: "org.mozilla.firefox"),
         Browser(name: "Zen", dataDirectory: "zen", kind: .firefox, bundleID: "app.zen-browser.zen"),
     ]
@@ -88,8 +94,8 @@ public enum HostManifests {
     }
 
     /// Whether `browser`'s data directory exists. One holding only a NativeMessagingHosts folder
-    /// doesn't count: that was made for manifests (ours for Search, or another app's), not by the
-    /// browser.
+    /// doesn't count: that was made for manifests (ours for Search or Orion, or another app's), not
+    /// by the browser.
     static func isInstalled(_ browser: Browser, in support: URL) -> Bool {
         var isDirectory: ObjCBool = false
         let path = support.appendingPathComponent(browser.dataDirectory).path

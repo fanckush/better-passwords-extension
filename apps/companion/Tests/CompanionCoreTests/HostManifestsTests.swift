@@ -79,6 +79,31 @@ func makeBrowserFolder(_ path: String, in support: URL) throws {
         #expect(HostManifests.sharing(search, in: support).map(\.name) == ["Chromium", "Search"])
     }
 
+    @Test func orionUsesChromesFolderWithoutLookingLikeChrome() throws {
+        let support = try temporarySupport(with: ["Orion"])
+        defer { try? FileManager.default.removeItem(at: support) }
+
+        let done = try HostManifests.install(hostPath: "/h", support: support)
+        #expect(done.map(\.name) == ["Orion"])
+        let chrome = support.appendingPathComponent("Google/Chrome/NativeMessagingHosts")
+        #expect(
+            FileManager.default.fileExists(
+                atPath: chrome.appendingPathComponent("io.github.fanckush.betterpasswords.companion.json").path))
+        // the folder made for Orion's manifests isn't a Chrome install
+        #expect(HostManifests.installed(in: support).map(\.name) == ["Orion"])
+        #expect(HostManifests.connected(hostPath: "/h", support: support).map(\.name) == ["Orion"])
+        #expect(HostManifests.browser(bundleID: "com.kagi.kagimacOS", name: "Orion")?.name == "Orion")
+    }
+
+    @Test func aRealChromeSharesItsFolderWithOrion() throws {
+        let support = try temporarySupport(with: ["Orion", "Google/Chrome"])
+        defer { try? FileManager.default.removeItem(at: support) }
+
+        try HostManifests.install(hostPath: "/h", support: support)
+        let orion = HostManifests.browsers.first { $0.name == "Orion" }!
+        #expect(HostManifests.sharing(orion, in: support).map(\.name) == ["Google Chrome", "Orion"])
+    }
+
     @Test func firefoxManifestsUseExtensionIDs() throws {
         let firefox = HostManifests.browsers.first { $0.kind == .firefox }!
         for manifest in HostManifests.manifests(for: firefox, hostPath: "/h") {

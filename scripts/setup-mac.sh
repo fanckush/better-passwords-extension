@@ -19,8 +19,8 @@ FIREFOX_ID="better-passwords@fanckush.github.io"
 SUPPORT="$HOME/Library/Application Support"
 
 # Chromium-based browsers: the path of their user data directory under Application Support, their
-# name, and the directory whose NativeMessagingHosts they read when it isn't their own (Search, a
-# WebKit browser, has none and reads Chromium's among others). Keep in sync with
+# name, and the directory whose NativeMessagingHosts they read when it isn't their own (Search and
+# Orion, WebKit browsers, have none and read Chromium's or Chrome's among others). Keep in sync with
 # HostManifests.browsers in the companion app.
 BROWSERS="Google/Chrome|Google Chrome
 Google/Chrome Beta|Google Chrome Beta
@@ -37,7 +37,8 @@ net.imput.helium|Helium
 Crest/Chromium|Crest
 com.ardia.browser/Chromium|Ardia
 Yab/Chromium|Yab
-Search|Search|Chromium"
+Search|Search|Chromium
+Orion|Orion|Google/Chrome"
 REQUEST_URL="https://github.com/fanckush/better-passwords-extension/issues/new?template=browser.yml"
 
 uninstall=0
@@ -120,7 +121,7 @@ connected=""
 add_connected() { connected="$connected${connected:+, }$1"; }
 
 # browser_installed DIR: the data directory exists and holds more than a NativeMessagingHosts
-# folder. One with only that was made for manifests (ours for Search, or another app's).
+# folder. One with only that was made for manifests (ours for Search or Orion, or another app's).
 browser_installed() {
     [ -d "$1" ] || return 1
     for entry in "$1"/* "$1"/.[!.]*; do
