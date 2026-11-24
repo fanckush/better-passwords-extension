@@ -71,7 +71,7 @@ Every menu gets a random nonce, issued by the background with its answer to the 
 2. refuses unless the menu has been genuinely visible for the last 300 ms (see the [threat model](threat-model.md)),
 3. fills around the field the menu was opened on, within that field's form.
 
-The content script runs in the top frame only. Logins inside cross-origin iframes are a later step.
+The content script runs in the page, in iframes of the page's own origin with only that origin around them, and in HTTPS iframes on another host of the page's site right inside the page (Schwab's sign-in on `sws-gateway-nr.schwab.com` inside `www.schwab.com`, Apple's on `idmsa.apple.com` inside `appstoreconnect.apple.com`). Such a frame can't read the page's address, so the background checks the site: the same registrable domain by the public suffix list, private part included, so two `github.io` sites stay apart (`isSameSiteFrame` in `apps/extension/src/same-site-frame.ts`). Once that frame asks for the menu, the tab is filled and saved for the frame's host until a field of the page's own origin asks. Logins in iframes of other sites are never filled.
 
 ## Filling (popup)
 

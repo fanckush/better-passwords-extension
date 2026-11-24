@@ -35,5 +35,16 @@ website password requirements, under the MIT license:
   Copyright 2020 - 2026 Apple Inc.
   https://github.com/apple/password-manager-resources
 
+The extension tells a page's own sign-in frames from other sites' with tldts, under the MIT
+license, which includes the Public Suffix List under the Mozilla Public License, Version 2.0:
+
+  tldts
+  Copyright (c) 2017 Thomas Parisot, 2018 Rémi Berson
+  https://github.com/remusao/tldts
+
+  Public Suffix List
+  https://publicsuffix.org
+  https://mozilla.org/MPL/2.0/
+
 Apple, iCloud and Apple Passwords are trademarks of Apple Inc. This project is not
 affiliated with or endorsed by Apple Inc.

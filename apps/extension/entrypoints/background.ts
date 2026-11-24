@@ -36,10 +36,11 @@ import { findOneTimeCodes, oneTimeCodeId, oneTimeCodeViews } from "@/src/passwor
 import { withSiteRules } from "@/src/passwords/site-rules.ts";
 import { waitForLogin } from "@/src/passwords/wait-for-login.ts";
 import { platform } from "@/src/platform.ts";
+import { isSameSiteFrame } from "@/src/same-site-frame.ts";
 import { Session } from "@/src/session/session.ts";
 import { toolbarAction } from "@/src/toolbar.ts";
 import { PendingUpdate } from "@/src/updates.ts";
-import { fillableUrl, frameOriginToFill, isAppleSignInFrame, sameFillableOrigin } from "@/src/url-policy.ts";
+import { fillableUrl, frameOriginToFill, sameFillableOrigin } from "@/src/url-policy.ts";
 
 const KEEP_ALIVE = "keep-alive";
 
@@ -83,10 +84,11 @@ interface SentLogin {
 const SENT_LOGIN_MS = 60_000;
 
 /**
- * Tabs showing Apple's sign-in frame on another Apple site, with the frame's address. Those tabs are
- * filled for the frame: it's the frame that gets the password, and the frame's site it's saved for.
+ * Tabs whose sign-in is in a frame on another host of the page's site (see isSameSiteFrame), with
+ * the frame's address, from when the frame last asked until the page's own fields do. Those tabs are
+ * filled for the frame: it's the frame that gets the password, and the frame's host it's saved for.
  */
-const appleSignIns = new Map<number, URL>();
+const signInFrames = new Map<number, URL>();
 
 export default defineBackground(() => {
   // macOS kills Apple's helper in browsers Apple doesn't allow, and every try leaves a crash report
@@ -416,7 +418,7 @@ export default defineBackground(() => {
     signedIn.delete(tabId);
     generatedByTab.delete(tabId);
     menuNonces.delete(tabId);
-    appleSignIns.delete(tabId);
+    signInFrames.delete(tabId);
     for (const key of generatedForMenu.keys()) if (key.startsWith(`${tabId}:`)) generatedForMenu.delete(key);
   });
 
@@ -505,7 +507,7 @@ export default defineBackground(() => {
     const generated = generatedByTab.get(tabId);
     if (generated && (change.url || change.status === "loading")) void saveGenerated(tabId, generated.formUsername);
     if (change.status === "complete" && sentLogins.has(tabId)) void saveSentLogin(tabId);
-    if (change.url) appleSignIns.delete(tabId);
+    if (change.url) signInFrames.delete(tabId);
   });
 
   /**
@@ -1157,14 +1159,18 @@ export default defineBackground(() => {
       sender.tab?.id !== undefined &&
       sender.frameId !== undefined &&
       sender.url &&
-      // the page, one of its own iframes (which also checks every frame around it), or Apple's sign-in
+      // the page, one of its own iframes (which also checks every frame around it), or a sign-in
+      // frame of the page's site right inside it
       (sender.frameId === 0 ||
         sameFillableOrigin(sender.url, sender.tab.url) ||
-        isAppleSignInFrame(sender.url, sender.tab.url)) &&
+        isSameSiteFrame(sender.url, sender.tab.url)) &&
       CONTENT_SCRIPT_REQUESTS.has(request.type)
     ) {
-      if (sender.frameId !== 0 && isAppleSignInFrame(sender.url, sender.tab.url)) {
-        appleSignIns.set(sender.tab.id, new URL(sender.url));
+      if (sender.frameId !== 0 && isSameSiteFrame(sender.url, sender.tab.url)) {
+        signInFrames.set(sender.tab.id, new URL(sender.url));
+      } else if (request.type === "autofill-status") {
+        // a field of the page's own origin has focus now
+        signInFrames.delete(sender.tab.id);
       }
       caller = { kind: "content-script", tabId: sender.tab.id, frameId: sender.frameId, url: sender.url };
     } else {
@@ -1185,7 +1191,7 @@ export default defineBackground(() => {
 
 async function tabUrl(tabId: number): Promise<URL | undefined> {
   const tab = await browser.tabs.get(tabId);
-  return appleSignIns.get(tabId) ?? fillableUrl(tab.url);
+  return signInFrames.get(tabId) ?? fillableUrl(tab.url);
 }
 
 async function getSettings(): Promise<Settings> {

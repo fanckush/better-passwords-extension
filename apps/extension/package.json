@@ -17,7 +17,8 @@
     "lint:firefox": "web-ext lint --source-dir .output/firefox-mv2 --warnings-as-errors"
   },
   "dependencies": {
-    "@app/protocol": "workspace:*"
+    "@app/protocol": "workspace:*",
+    "tldts": "^7.5.5"
   },
   "devDependencies": {
     "@app/fake-helper": "workspace:*",

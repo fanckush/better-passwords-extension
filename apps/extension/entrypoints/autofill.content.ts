@@ -39,8 +39,8 @@ import { frameOriginToFill } from "@/src/url-policy.ts";
 /** Omit for each member of a union. */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
-// The page, its own iframes and Apple's sign-in frame (see frameOriginToFill). Logins inside other
-// cross-origin iframes need their own origin rules.
+// The page, its own iframes, and sign-in frames of the page's site on another of its hosts (see
+// frameOriginToFill and isSameSiteFrame). Logins in iframes of other sites are never filled.
 export default defineContentScript({
   matches: FILL_MATCHES,
   allFrames: true,
@@ -108,7 +108,7 @@ export default defineContentScript({
       }
     }
 
-    /** Whether focus is somewhere in the page; a page of another origin (Apple's sign-in) can't say. */
+    /** Whether focus is somewhere in the page; a frame on another host of the site can't say. */
     function focusInPage(): boolean {
       try {
         return window.top?.document.hasFocus() ?? false;

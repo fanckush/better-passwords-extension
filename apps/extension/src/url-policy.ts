@@ -24,26 +24,13 @@ export function sameFillableOrigin(a: string | undefined, b: string | undefined)
 }
 
 /**
- * Apple's sign-in frame on another Apple site (App Store Connect): the one cross-origin frame that's
- * filled. Everything else from another origin needs origin rules of its own.
- */
-export function isAppleSignInFrame(frameUrl: string | undefined, pageUrl: string | undefined): boolean {
-  const frame = fillableUrl(frameUrl);
-  const page = fillableUrl(pageUrl);
-  return (
-    frame?.protocol === "https:" &&
-    frame.hostname === "idmsa.apple.com" &&
-    page?.protocol === "https:" &&
-    page.hostname.endsWith(".apple.com")
-  );
-}
-
-/**
  * This frame's origin if it may be filled, otherwise undefined: the page itself, an iframe of the
- * page's origin with only that origin around it, or Apple's sign-in frame right inside the page
- * (the frame can't see the page's address: the background checks it, see isAppleSignInFrame).
- * Another site around a frame could cover it from where the frame can't see. Also injected by
- * scripting.executeScript, so it must not reference anything outside its own body.
+ * page's origin with only that origin around it, or an HTTPS iframe of another origin right inside
+ * the page. The last can't read the page's address: where the browser shows the page's origin, a
+ * frame on another domain is left out here; either way the background allows it only on the page's
+ * own site (see isSameSiteFrame). Another site around a frame could cover it from where the frame
+ * can't see. Also injected by scripting.executeScript, so it must not reference anything outside
+ * its own body.
  */
 export function frameOriginToFill(view: Window = window): string | undefined {
   try {
@@ -53,6 +40,15 @@ export function frameOriginToFill(view: Window = window): string | undefined {
     }
     return view.location.origin;
   } catch {
-    return view.location.hostname === "idmsa.apple.com" && view.parent === view.top ? view.location.origin : undefined;
+    const { protocol, hostname, origin } = view.location;
+    if (protocol !== "https:" || view.parent !== view.top) return undefined;
+    // not in Firefox; the background decides there
+    const page = view.location.ancestorOrigins?.item(0);
+    if (page) {
+      // a site shares at least its last two labels: anything else is another site for sure
+      const lastTwo = (host: string) => host.split(".").slice(-2).join(".");
+      if (!page.startsWith("https://") || lastTwo(new URL(page).hostname) !== lastTwo(hostname)) return undefined;
+    }
+    return origin;
   }
 }
