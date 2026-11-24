@@ -302,9 +302,17 @@ export class ApplePasswordsClient {
       );
       // Replies carry no id: a late answer to a replaced read could arrive now. Use only the
       // password of the login asked for, on the site asked for.
-      const entry = reply.Entries?.find(
-        (e) => (e.USR ?? "") === username && (e.sites ?? []).some((site) => isSameSite(site, hostname)),
-      );
+      const entries = (reply.Entries ?? []).filter((e) => (e.USR ?? "") === username);
+      let entry = entries.find((e) => (e.sites ?? []).some((site) => isSameSite(site, hostname)));
+      if (!entry && entries.length) {
+        // Apple also offers logins saved on a sibling subdomain or a related domain (one saved for
+        // myaccount.google.com on accounts.google.com). Accept one only if the helper lists it for
+        // this page right now: a late answer for another site isn't among those.
+        const listed = (await this.getLogins(hostname, tab))
+          .filter((login) => login.username === username)
+          .flatMap((login) => login.sites);
+        entry = entries.find((e) => (e.sites ?? []).some((site) => listed.some((other) => isSameSite(site, other))));
+      }
       if (!entry && reply.Entries?.length) throw invalid("reply for another site or login");
       if (!entry || typeof entry.PWD !== "string") return undefined;
       return { username, password: entry.PWD };

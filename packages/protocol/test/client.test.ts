@@ -76,6 +76,25 @@ describe("ApplePasswordsClient", () => {
     expect(await client.getPassword("example.com", "mallory", tab)).toBeUndefined();
   });
 
+  it("reads a password Apple offers from a sibling subdomain", async () => {
+    const helper = new FakeHelper({
+      vault: [
+        {
+          hostname: "myaccount.google.com",
+          username: "dana@gmail.com",
+          password: "orange juice",
+          alsoOfferedOn: ["accounts.google.com"],
+        },
+      ],
+    });
+    const client = await ApplePasswordsClient.connect(new MemoryTransport(helper));
+    await pair(helper, client);
+    expect(await client.getPassword("accounts.google.com", "dana@gmail.com", tab)).toEqual({
+      username: "dana@gmail.com",
+      password: "orange juice",
+    });
+  });
+
   it("works with the older hex encoding", async () => {
     const { helper, client } = await setup({ base64: false });
     await pair(helper, client);

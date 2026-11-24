@@ -38,6 +38,8 @@ export interface VaultEntry {
   hostname: string;
   username: string;
   password: string;
+  /** Other hostnames the helper also offers this login on, as Apple's does for a sibling subdomain or related domain. */
+  alsoOfferedOn?: string[];
   /** A verification code set up for this login. */
   totp?: { secret: string } & TotpOptions;
 }
@@ -228,7 +230,7 @@ export class FakeHelper {
     const opened = await this.#open<{ URL: string; USR?: string }>(message);
     if (!opened) return { cmd: message.cmd, payload: { SMSG: JSON.stringify({ TID: "", SDATA: "" }) } };
     const { session, request } = opened;
-    const matches = this.vault.filter((e) => e.hostname === request.URL);
+    const matches = this.vault.filter((e) => e.hostname === request.URL || e.alsoOfferedOn?.includes(request.URL));
     let entries: LoginEntry[];
     if (message.cmd === Command.GetLoginNamesForUrl) {
       // like the real helper may, leave the field out for a login without a username
