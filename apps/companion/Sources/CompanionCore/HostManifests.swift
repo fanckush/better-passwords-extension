@@ -57,11 +57,17 @@ public enum HostManifests {
             name: "Google Chrome Canary", dataDirectory: "Google/Chrome Canary", kind: .chromium,
             bundleID: "com.google.Chrome.canary"),
         Browser(name: "Chromium", dataDirectory: "Chromium", kind: .chromium, bundleID: "org.chromium.Chromium"),
+        // Brave reads native messaging hosts from Chrome's folder, not its own (brave-core's
+        // BraveMainDelegate::PreSandboxStartup overrides DIR_USER_NATIVE_MESSAGING on Mac).
         Browser(
-            name: "Brave", dataDirectory: "BraveSoftware/Brave-Browser", kind: .chromium, bundleID: "com.brave.Browser"),
+            name: "Brave", dataDirectory: "BraveSoftware/Brave-Browser", kind: .chromium, bundleID: "com.brave.Browser",
+            manifestDirectory: "Google/Chrome"),
         Browser(
             name: "Brave Beta", dataDirectory: "BraveSoftware/Brave-Browser-Beta", kind: .chromium,
-            bundleID: "com.brave.Browser.beta"),
+            bundleID: "com.brave.Browser.beta", manifestDirectory: "Google/Chrome"),
+        Browser(
+            name: "Brave Origin", dataDirectory: "BraveSoftware/Brave-Origin", kind: .chromium,
+            bundleID: "com.brave.Browser.origin", manifestDirectory: "Google/Chrome"),
         Browser(
             name: "Microsoft Edge", dataDirectory: "Microsoft Edge", kind: .chromium, bundleID: "com.microsoft.edgemac"),
         Browser(name: "Vivaldi", dataDirectory: "Vivaldi", kind: .chromium, bundleID: "com.vivaldi.Vivaldi"),

@@ -20,15 +20,16 @@ SUPPORT="$HOME/Library/Application Support"
 
 # Chromium-based browsers: the path of their user data directory under Application Support, their
 # name, and the directory whose NativeMessagingHosts they read when it isn't their own (Search and
-# Orion, WebKit browsers, have none and read Chromium's or Chrome's among others). Keep in sync with
-# HostManifests.browsers in the companion app.
+# Orion, WebKit browsers, have none and read Chromium's or Chrome's among others; Brave reads
+# Chrome's). Keep in sync with HostManifests.browsers in the companion app.
 BROWSERS="Google/Chrome|Google Chrome
 Google/Chrome Beta|Google Chrome Beta
 Google/Chrome Dev|Google Chrome Dev
 Google/Chrome Canary|Google Chrome Canary
 Chromium|Chromium
-BraveSoftware/Brave-Browser|Brave
-BraveSoftware/Brave-Browser-Beta|Brave Beta
+BraveSoftware/Brave-Browser|Brave|Google/Chrome
+BraveSoftware/Brave-Browser-Beta|Brave Beta|Google/Chrome
+BraveSoftware/Brave-Origin|Brave Origin|Google/Chrome
 Microsoft Edge|Microsoft Edge
 Vivaldi|Vivaldi
 Arc/User Data|Arc
