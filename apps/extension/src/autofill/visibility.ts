@@ -12,8 +12,18 @@ function styleHidesContent(style: CSSStyleDeclaration): boolean {
     opacity < MIN_OPACITY ||
     (style.filter !== "" && style.filter !== "none") ||
     (style.clipPath !== "" && style.clipPath !== "none") ||
-    (style.mixBlendMode !== "" && style.mixBlendMode !== "normal")
+    (style.mixBlendMode !== "" && style.mixBlendMode !== "normal") ||
+    // a mask paints the menu away while it still takes clicks; hidden content takes none, but isn't seen
+    masks(style) ||
+    style.getPropertyValue("content-visibility") === "hidden"
   );
+}
+
+function masks(style: CSSStyleDeclaration): boolean {
+  return ["mask-image", "-webkit-mask-image", "mask-border-source", "-webkit-mask-box-image-source"].some((name) => {
+    const value = style.getPropertyValue(name);
+    return value !== "" && value !== "none";
+  });
 }
 
 /** True if `host` is open, fully opaque all the way up, and topmost across its whole area. */
@@ -32,8 +42,9 @@ export function isMenuGenuinelyVisible(host: HTMLElement, view: Window = window)
 
   // The menu lives in the top layer, so normal page content can't cover it. Anything else the page
   // put in the top layer after us could, so refuse while any other popover or modal is open.
-  const others = view.document.querySelectorAll(":popover-open, :modal");
-  if (Array.from(others).some((el) => el !== host)) return false;
+  // A fullscreen element joins the top layer too; one around the menu (the page itself) is fine.
+  const others = view.document.querySelectorAll(":popover-open, :modal, :fullscreen");
+  if (Array.from(others).some((el) => el !== host && !el.contains(host))) return false;
 
   // Hit-test the corners and centre. This catches covering elements that take clicks; overlays
   // with pointer-events: none are invisible to hit-testing, which is why the menu page also tracks

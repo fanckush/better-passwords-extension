@@ -70,11 +70,12 @@ describe("frameOriginToFill", () => {
 
   /** A chain of frames, innermost first; an origin of null can't be read, as with another site's frame. */
   function frames(...origins: (string | null)[]): Window {
-    type Frame = { parent: Frame; top: Frame };
+    type Frame = { parent: Frame; top: Frame; origin: string | null };
     let outer: Frame | undefined;
     let top: Frame | undefined;
     for (const origin of [...origins].reverse()) {
       const frame = {
+        origin,
         get location() {
           if (origin === null) throw new DOMException("Blocked", "SecurityError");
           return { origin, hostname: new URL(origin).hostname };
@@ -90,6 +91,25 @@ describe("frameOriginToFill", () => {
 
   it("gives the origin of the page itself", () => {
     expect(frameOriginToFill(frames("https://a.example"))).toBe("https://a.example");
+  });
+
+  /** As `frames`, with the innermost one sandboxed: its address is the site's, its origin isn't. */
+  function sandboxed(...origins: (string | null)[]): Window {
+    const view = frames(...origins);
+    (view as unknown as { origin: string }).origin = "null";
+    return view;
+  }
+
+  it("refuses a sandboxed page at the site's address (uploaded HTML)", () => {
+    expect(frameOriginToFill(sandboxed("https://a.example"))).toBeUndefined();
+  });
+
+  it("refuses a sandboxed iframe of the page's origin", () => {
+    expect(frameOriginToFill(sandboxed("https://a.example", "https://a.example"))).toBeUndefined();
+  });
+
+  it("refuses Apple's sign-in address when sandboxed", () => {
+    expect(frameOriginToFill(sandboxed(apple, null))).toBeUndefined();
   });
 
   it("gives the origin of nested iframes of the page's origin", () => {

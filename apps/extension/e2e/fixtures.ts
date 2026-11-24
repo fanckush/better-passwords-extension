@@ -174,7 +174,11 @@ export const test = base.extend<Fixtures, { siteUrl: string }>({
           return;
         }
         const type = name.endsWith(".js") ? "text/javascript" : "text/html";
-        res.writeHead(200, { "content-type": type }).end(body);
+        // ?sandbox: served as a site serves uploaded HTML, at its own address but as another origin
+        const sandbox = (req.url ?? "").includes("?sandbox")
+          ? { "content-security-policy": "sandbox allow-scripts allow-forms" }
+          : {};
+        res.writeHead(200, { "content-type": type, ...sandbox }).end(body);
       });
       await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
       await use(`http://localhost:${(server.address() as AddressInfo).port}`);

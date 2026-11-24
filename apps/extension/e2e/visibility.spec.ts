@@ -47,6 +47,21 @@ test.describe("isMenuGenuinelyVisible", () => {
     });
   }
 
+  // set on the menu's own element, which the page's scripts can reach: it stays clickable under these
+  for (const [name, css] of [
+    ["a mask", "mask-image: linear-gradient(transparent, transparent)"],
+    ["a prefixed mask", "-webkit-mask-image: linear-gradient(transparent, transparent)"],
+    ["hidden content", "content-visibility: hidden"],
+  ]) {
+    test(`rejects ${name} on the menu itself`, async ({ page }) => {
+      await page.evaluate((style) => {
+        const { host } = window as unknown as { host: HTMLElement };
+        host.style.cssText += `;${style}`;
+      }, css as string);
+      expect(await check(page)).toBe(false);
+    });
+  }
+
   test("rejects another top-layer element opened above the menu", async ({ page }) => {
     await page.evaluate(() => {
       const cover = document.createElement("div");

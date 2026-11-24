@@ -44,8 +44,13 @@ export function isAppleSignInFrame(frameUrl: string | undefined, pageUrl: string
  * (the frame can't see the page's address: the background checks it, see isAppleSignInFrame).
  * Another site around a frame could cover it from where the frame can't see. Also injected by
  * scripting.executeScript, so it must not reference anything outside its own body.
+ *
+ * A sandboxed document (served with `Content-Security-Policy: sandbox`, as sites do for uploaded
+ * HTML) keeps its address, and so `location.origin`, but is another origin to the browser: its own
+ * `origin` is "null". It's never filled: the site itself doesn't trust it with its data.
  */
 export function frameOriginToFill(view: Window = window): string | undefined {
+  if (view.origin !== view.location.origin) return undefined;
   try {
     for (let frame = view; frame !== frame.parent; frame = frame.parent) {
       // reading another origin's location throws

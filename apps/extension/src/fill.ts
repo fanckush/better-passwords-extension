@@ -4,7 +4,8 @@ import type { FieldRules } from "./passwords/generate.ts";
 // fillCredentials runs inside the page: injected by scripting.executeScript (popup) or called by the
 // autofill content script (inline menu), so it must not reference anything outside its own body.
 // It refuses to fill if the page navigated to another origin since the user chose the login, and
-// only touches visible fields. The functions after it are used by the content script only.
+// only touches visible fields. The origin compared is the document's own (`window.origin`), not its
+// address's: a sandboxed document at the site's address is "null", and never filled. The functions after it are used by the content script only.
 
 /** "needs-password": asked to fill without the password, but the form has a password field. */
 export type FillResult = "filled" | "origin-mismatch" | "no-fields" | "needs-password";
@@ -21,7 +22,7 @@ export function fillCredentials(
   /** The field the inline menu was opened on; otherwise the focused field is used. */
   anchor?: HTMLInputElement,
 ): FillResult {
-  if (window.location.origin !== expectedOrigin) return "origin-mismatch";
+  if (window.origin !== expectedOrigin) return "origin-mismatch";
 
   const isVisible = (el: HTMLInputElement) => {
     if (el.disabled || el.readOnly || el.type === "hidden") return false;
@@ -80,7 +81,7 @@ export function fillCredentials(
  * fields (the confirmation). Called by the content script only after Apple Passwords saved it.
  */
 export function fillNewPassword(expectedOrigin: string, password: string, anchor: HTMLInputElement): FillResult {
-  if (window.location.origin !== expectedOrigin) return "origin-mismatch";
+  if (window.origin !== expectedOrigin) return "origin-mismatch";
   if (!anchor.isConnected || !mayTakeNewPassword(anchor)) return "no-fields";
   for (const el of newPasswordTargets(anchor)) setInputValue(el, password);
   anchor.focus();
@@ -116,7 +117,7 @@ export function newPasswordRules(anchor: HTMLInputElement): FieldRules {
 
 /** Fills an email address into the field the menu was opened on (email fields). */
 export function fillEmail(expectedOrigin: string, email: string, field: HTMLInputElement): FillResult {
-  if (window.location.origin !== expectedOrigin) return "origin-mismatch";
+  if (window.origin !== expectedOrigin) return "origin-mismatch";
   if (!field.isConnected || !isFillable(field)) return "no-fields";
   setInputValue(field, email);
   return "filled";
@@ -128,7 +129,7 @@ export function fillEmail(expectedOrigin: string, email: string, field: HTMLInpu
  * nothing is ever submitted for the user.
  */
 export function fillOneTimeCode(expectedOrigin: string, code: string, anchor: HTMLInputElement): FillResult {
-  if (window.location.origin !== expectedOrigin) return "origin-mismatch";
+  if (window.origin !== expectedOrigin) return "origin-mismatch";
   if (!anchor.isConnected || !isFillable(anchor) || !isOneTimeCodeField(anchor)) return "no-fields";
   const boxes = oneTimeCodeGroup(anchor).filter(isFillable);
   if (boxes.length > 1) {

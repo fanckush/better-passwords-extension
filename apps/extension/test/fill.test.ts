@@ -9,6 +9,8 @@ import {
   usernameNear,
 } from "../src/fill.ts";
 
+// happy-dom has no `window.origin`: a document's own origin, which is its address's unless sandboxed
+Object.defineProperty(window, "origin", { configurable: true, get: () => window.location.origin });
 const origin = window.location.origin;
 
 beforeEach(() => {
@@ -41,6 +43,26 @@ describe("fillCredentials", () => {
   it("refuses when the page is on another origin", () => {
     page(`<input id="pass" type="password">`);
     expect(fillCredentials("https://evil.example", "a", "b")).toBe("origin-mismatch");
+    expect(value("#pass")).toBe("");
+  });
+
+  it("refuses a sandboxed page at the site's own address", () => {
+    // `Content-Security-Policy: sandbox` (uploaded HTML): the address stays, the origin is "null"
+    page(`<input id="user" autocomplete="username"><input id="pass" type="password">`);
+    const sandboxed = vi.spyOn(window, "origin", "get").mockReturnValue("null");
+    try {
+      expect(fillCredentials(origin, "a", "b")).toBe("origin-mismatch");
+      expect(fillNewPassword(origin, "x", document.querySelector("#pass") as HTMLInputElement)).toBe("origin-mismatch");
+      expect(fillEmail(origin, "a@b.example", document.querySelector("#user") as HTMLInputElement)).toBe(
+        "origin-mismatch",
+      );
+      expect(fillOneTimeCode(origin, "123456", document.querySelector("#user") as HTMLInputElement)).toBe(
+        "origin-mismatch",
+      );
+    } finally {
+      sandboxed.mockRestore();
+    }
+    expect(value("#user")).toBe("");
     expect(value("#pass")).toBe("");
   });
 
