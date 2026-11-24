@@ -7,7 +7,7 @@ Releases are automatic. [semantic-release](https://semantic-release.gitbook.io) 
 | Extension (with the shared packages) | everything not scoped `(companion)` | `extension-v*` |
 | Companion app | `feat(companion): …`, `fix(companion): …` | `companion-v*` |
 
-`scripts/release/component-commits.js` does the split, for both the version bump and the release notes.
+`scripts/release/component-commits.js` does the split for the version bump and the release notes. `scripts/release/component-github.js` does the same for the GitHub plugin, so the "included in version X" comments and labels only land on that component's PRs and issues.
 
 | Commit | Release |
 |---|---|

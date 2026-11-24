@@ -14,6 +14,6 @@ export default {
         successCmd: 'echo "version=${nextRelease.version}" >> "$GITHUB_OUTPUT"',
       },
     ],
-    ["@semantic-release/github", { assets: [{ path: ".output/*.zip" }] }],
+    ["../../scripts/release/component-github.js", { component: "extension", assets: [{ path: ".output/*.zip" }] }],
   ],
 };

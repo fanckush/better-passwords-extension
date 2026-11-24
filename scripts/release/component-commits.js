@@ -3,7 +3,8 @@
 // Commits scoped `(companion)` belong to the Mac companion app. Every other commit belongs to
 // the extension, which bundles the shared packages. This plugin filters the commits, then hands
 // them to the standard commit analyzer and release-notes generator, so both the version bump
-// and the notes only cover that component.
+// and the notes only cover that component. component-github.js does the same for the GitHub
+// plugin, so release comments and labels only land on that component's issues and PRs.
 //
 // Usage in release.config.js: ["<path>/component-commits.js", { component: "companion", preset: "conventionalcommits" }]
 
@@ -18,7 +19,8 @@ export function componentOf(message) {
   return scope === "companion" ? "companion" : "extension";
 }
 
-function only(pluginConfig, context) {
+/** Splits off the `component` option and narrows the context's commits to that component. */
+export function only(pluginConfig, context) {
   const { component, ...rest } = pluginConfig;
   if (component !== "companion" && component !== "extension") {
     throw new Error(`component-commits: unknown component ${JSON.stringify(component)}`);

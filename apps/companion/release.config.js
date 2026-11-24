@@ -13,6 +13,9 @@ export default {
         successCmd: 'echo "version=${nextRelease.version}" >> "$GITHUB_OUTPUT"',
       },
     ],
-    ["@semantic-release/github", { assets: [{ path: "dist/updates/*.dmg" }, { path: "dist/updates/appcast.xml" }] }],
+    [
+      "../../scripts/release/component-github.js",
+      { component: "companion", assets: [{ path: "dist/updates/*.dmg" }, { path: "dist/updates/appcast.xml" }] },
+    ],
   ],
 };
