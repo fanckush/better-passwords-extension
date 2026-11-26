@@ -1,6 +1,6 @@
 // Keeps the browser's own passkey list out of login fields, where it shows over our inline menu
 // (issue #29). Sites ask for that list with a "conditional" WebAuthn request. While the guard is on,
-// we tell sites it isn't available and hold any such request. The menu can then "show the browser's
+// we hold any such request, so the browser shows nothing. The menu can then "show the browser's
 // passkey list" once: held requests go to the browser, and later requests are held again. The site's
 // own passkey button makes a normal request, which is never held.
 //
@@ -44,16 +44,9 @@ export function guardConditionalPasskeys(view: Window & typeof globalThis = wind
     view.dispatchEvent(new Event(EVENT_HELD));
   };
 
-  // sites that check first usually show their own passkey button instead
-  const available = publicKey.isConditionalMediationAvailable;
-  if (available) {
-    publicKey.isConditionalMediationAvailable = () => (guarding() ? Promise.resolve(false) : available.call(publicKey));
-  }
-  const capabilities = publicKey.getClientCapabilities;
-  if (capabilities) {
-    publicKey.getClientCapabilities = () =>
-      capabilities.call(publicKey).then((found) => (guarding() ? { ...found, conditionalGet: false } : found));
-  }
+  // The browser's answer stays as it is. Sites that check it first (GitHub does) then still send
+  // their conditional request, and that request is held below. Answering "no" here would stop them
+  // from sending it at all, so there would be nothing to show.
 
   const get = credentials.get;
   credentials.get = function (this: CredentialsContainer, options?: CredentialRequestOptions) {

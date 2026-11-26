@@ -49,12 +49,12 @@ async function settled(promise: Promise<unknown>): Promise<boolean> {
 }
 
 describe("guardConditionalPasskeys", () => {
-  it("says conditional passkey requests aren't available", async () => {
+  it("keeps the browser's own answers, so sites still send their conditional request", async () => {
     const { view, PublicKeyCredential } = fakeWindow();
     guardConditionalPasskeys(view);
-    await expect(PublicKeyCredential.isConditionalMediationAvailable()).resolves.toBe(false);
+    await expect(PublicKeyCredential.isConditionalMediationAvailable()).resolves.toBe(true);
     await expect(PublicKeyCredential.getClientCapabilities()).resolves.toEqual({
-      conditionalGet: false,
+      conditionalGet: true,
       passkeyPlatformAuthenticator: true,
     });
   });

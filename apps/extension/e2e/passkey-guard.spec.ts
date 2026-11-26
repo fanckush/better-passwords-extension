@@ -4,7 +4,8 @@ test("keeps the browser's passkey suggestions out of login fields", async ({ con
   const page = await context.newPage();
   await page.goto(`${siteUrl}/login.html`);
 
-  expect(await page.evaluate(() => PublicKeyCredential.isConditionalMediationAvailable())).toBe(false);
+  // the browser's own answer stays, so the page sends its request, and the guard holds it
+  expect(await page.evaluate(() => PublicKeyCredential.isConditionalMediationAvailable())).toBe(true);
   // a conditional request stays open (no suggestions) until the site aborts it
   const outcome = await page.evaluate(async () => {
     const abort = new AbortController();
@@ -33,7 +34,7 @@ test("leaves passkeys alone in an iframe of another origin", async ({ context, s
   await frame?.waitForLoadState();
 
   // the page's own copy is guarded, the other site's frame keeps the browser's
-  const isNative = () => PublicKeyCredential.isConditionalMediationAvailable.toString().includes("[native code]");
+  const isNative = () => CredentialsContainer.prototype.get.toString().includes("[native code]");
   expect(await page.evaluate(isNative)).toBe(false);
   expect(await frame?.evaluate(isNative)).toBe(true);
 });
