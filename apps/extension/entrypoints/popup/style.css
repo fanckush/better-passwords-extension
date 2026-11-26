@@ -249,8 +249,24 @@ h2 {
 }
 
 /* a setting's name, with a short description under it */
+label.toggle:has(.detail) {
+  align-items: flex-start;
+}
+
+/* the box sits on the name's line, not between the two lines */
+label.toggle:has(.detail) input {
+  margin-top: 1px;
+  margin-bottom: 0;
+}
+
+/* tight inside a setting, looser between settings, so each reads as one item */
 label.toggle .text {
   display: grid;
+  line-height: 1.25;
+}
+
+label.toggle + label.toggle {
+  margin-top: 4px;
 }
 
 label.toggle .detail {
