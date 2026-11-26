@@ -104,6 +104,18 @@ describe("guardConditionalPasskeys", () => {
     expect(root.getAttribute(ATTRIBUTE_HELD)).toBe("true");
   });
 
+  it("with nothing held, shows the browser's list once with a fresh request", async () => {
+    const { view, credentials, nativeGet, events } = fakeWindow();
+    guardConditionalPasskeys(view);
+    events.dispatchEvent(new Event(EVENT_RELEASE));
+    expect(nativeGet).toHaveBeenCalledTimes(1);
+    const [options] = nativeGet.mock.calls[0] as unknown as [CredentialRequestOptions];
+    expect(options.mediation).toBe("conditional");
+    expect(options.publicKey?.challenge).toBeInstanceOf(Uint8Array);
+    // the page's next request is still held
+    expect(await settled(credentials.get(conditional()))).toBe(false);
+  });
+
   it("passes the browser's failure of a released request to the site", async () => {
     const { view, credentials, nativeGet, events } = fakeWindow();
     nativeGet.mockRejectedValueOnce(new DOMException("cancelled", "NotAllowedError"));

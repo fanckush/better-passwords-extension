@@ -724,18 +724,18 @@ async function showLocked(error?: string) {
   render(unlockRow(), error ? message(error, true) : null, ...passkeyRows());
 }
 
-/** Whether the page holds a passkey request for the browser's list (see passkey-guard.ts). */
-let passkeyHeld = false;
+/** Whether the menu offers "Show browser passkey list" (the setting is on). */
+let passkeyShown = false;
 
 async function loadPasskeyState() {
-  passkeyHeld = await send({ type: "passkey-state" })
-    .then((state) => state.held)
+  passkeyShown = await send({ type: "passkey-state" })
+    .then((state) => state.shown)
     .catch(() => false);
 }
 
-/** A separator and "Show browser passkey list", when the page holds a request. Login fields only. */
+/** A separator and "Show browser passkey list", for login fields. Shows the browser's list once. */
 function passkeyRows(): Node[] {
-  if (kind !== "login" || !passkeyHeld) return [];
+  if (kind !== "login" || !passkeyShown) return [];
   const item = row(KEY, "Show browser passkey list", "This time only", async () => {
     await send({ type: "release-passkey" }).catch(() => {});
     close();

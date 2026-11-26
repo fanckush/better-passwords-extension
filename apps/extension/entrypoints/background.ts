@@ -773,10 +773,6 @@ export default defineBackground(() => {
     if (caller.kind === "content-script") {
       if (request.type === "autofill-status")
         return autofillStatus(caller, request.kind, request.unsure, request.signIn);
-      if (request.type === "passkey-held") {
-        setPasskeyHeld(caller.tabId, caller.frameId, request.held);
-        return null;
-      }
       if (request.type === "generated-username") {
         trackUsername(caller, request.username);
         return null;
@@ -1056,12 +1052,11 @@ export default defineBackground(() => {
         await browser.tabs.create({ url: "https://www.icloud.com/" });
         return null;
       case "passkey-state":
-        return { held: (passkeysHeld.get(tabOf(caller))?.size ?? 0) > 0 };
+        return { shown: (await getSettings()).passkeyGuard };
       case "release-passkey": {
         const tabId = tabOf(caller);
-        const frames = [...(passkeysHeld.get(tabId) ?? [])];
-        passkeysHeld.delete(tabId);
-        // the page's own frames that hold a request; the rest of the page is untouched
+        // every frame of the page: a frame without a held request shows the list once anyway
+        const frames = await pageFrames(tabId).catch(() => [0]);
         await Promise.all(frames.map((frameId) => relay(tabId, { type: "release-passkey" }, frameId).catch(() => {})));
         return null;
       }
@@ -1069,20 +1064,6 @@ export default defineBackground(() => {
         throw new Error("content scripts only");
     }
   }
-
-  /** Frames of each tab whose page holds a passkey request for the browser's list (see passkey-guard.ts). */
-  const passkeysHeld = new Map<number, Set<number>>();
-  function setPasskeyHeld(tabId: number, frameId: number, held: boolean) {
-    const frames = passkeysHeld.get(tabId) ?? new Set<number>();
-    if (held) frames.add(frameId);
-    else frames.delete(frameId);
-    if (frames.size > 0) passkeysHeld.set(tabId, frames);
-    else passkeysHeld.delete(tabId);
-  }
-  // a new page in the tab starts with no held requests
-  browser.tabs.onUpdated.addListener((tabId, change) => {
-    if (change.status === "loading") passkeysHeld.delete(tabId);
-  });
 
   /** The frames that may be filled for the tab, the page's own first. */
   async function pageFrames(tabId: number): Promise<number[]> {

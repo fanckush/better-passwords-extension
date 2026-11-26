@@ -1,13 +1,13 @@
 // Keeps the browser's own passkey list out of login fields, where it shows over our inline menu
 // (issue #29). Sites ask for that list with a "conditional" WebAuthn request. While the guard is on,
 // we tell sites it isn't available and hold any such request. The menu can then "show the browser's
-// passkey list" (release): held requests go to the browser, and later ones pass through, until the
-// page reloads. The site's own passkey button makes a normal request, which is never held.
+// passkey list" once: held requests go to the browser, and later requests are held again. The site's
+// own passkey button makes a normal request, which is never held.
 //
 // Page-side state is shared with the isolated content script through the page's DOM only:
 // - ATTRIBUTE_GUARD="off" turns the guard off (set at document_start from the setting);
 // - ATTRIBUTE_HELD="true" while a request is held, with EVENT_HELD dispatched when that changes;
-// - EVENT_RELEASE, dispatched by the content script, releases the held requests.
+// - EVENT_RELEASE, dispatched by the content script, shows the browser's list once.
 
 export const ATTRIBUTE_GUARD = "data-better-passwords-passkey-guard";
 export const ATTRIBUTE_HELD = "data-better-passwords-passkey-held";
@@ -85,7 +85,14 @@ export function guardConditionalPasskeys(view: Window & typeof globalThis = wind
     });
   };
 
+  // once: held requests go to the browser (the site gets its answer); with none held, the browser's
+  // list opens for a fresh request. Requests after that are held again.
   view.addEventListener(EVENT_RELEASE, () => {
+    if (held.size === 0) {
+      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      get.call(credentials, { mediation: "conditional", publicKey: { challenge } }).catch(() => {});
+      return;
+    }
     for (const entry of [...held]) {
       entry.forget();
       get.call(entry.container, entry.options).then(entry.resolve, entry.reject);

@@ -38,7 +38,7 @@ test("leaves passkeys alone in an iframe of another origin", async ({ context, s
   expect(await frame?.evaluate(isNative)).toBe(true);
 });
 
-test("the menu offers to show the browser's passkey list while a passkey request is held", async ({
+test("the menu offers to show the browser's passkey list, once, while the setting is on", async ({
   context,
   siteUrl,
 }) => {
@@ -61,4 +61,13 @@ test("the menu offers to show the browser's passkey list while a passkey request
   await expect
     .poll(() => page.evaluate(() => document.documentElement.getAttribute("data-better-passwords-passkey-held")))
     .toBe("false");
+});
+
+test("the menu offers the browser's passkey list even when the page holds no request", async ({ context, siteUrl }) => {
+  const page = await context.newPage();
+  await page.goto(`${siteUrl}/login.html`);
+  await page.locator("#user").click();
+
+  const menu = await menuFrame(page);
+  await expect(menu.getByText("Show browser passkey list")).toBeVisible();
 });
