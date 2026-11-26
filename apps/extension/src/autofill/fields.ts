@@ -24,9 +24,24 @@ const NEWSLETTER_HINT = /newsletter|subscri|abonn/i;
 /** A link to reset a forgotten password: the page signs in. */
 const PASSWORD_RESET = /forg[eo]t|reset|vergessen|oubli|olvid/i;
 
+/**
+ * The field's labels, and a label for a wrapper around it that holds no other field (Supabase's
+ * "Authentication code" names the div its input sits in).
+ */
+function labelsOf(el: HTMLInputElement): HTMLLabelElement[] {
+  const labels = Array.from(el.labels ?? []);
+  let scope = el.parentElement;
+  for (let depth = 0; scope && depth < 3; depth++, scope = scope.parentElement) {
+    if (scope.querySelectorAll("input, select, textarea").length > 1) break;
+    if (scope.id)
+      labels.push(...el.ownerDocument.querySelectorAll<HTMLLabelElement>(`label[for="${CSS.escape(scope.id)}"]`));
+  }
+  return labels;
+}
+
 function textOf(el: HTMLInputElement): string {
   // the label too: some fields say what they are nowhere else (no name, a generated id)
-  const labels = Array.from(el.labels ?? [], (label) => label.textContent ?? "");
+  const labels = labelsOf(el).map((label) => label.textContent ?? "");
   return [el.name, el.id, el.getAttribute("aria-label") ?? "", el.placeholder, ...labels].join(" ");
 }
 

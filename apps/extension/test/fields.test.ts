@@ -189,6 +189,11 @@ describe("verification code fields", () => {
     ["field named otp", `<form><input id="f" name="otp"></form>`],
     ["field named app_otp", `<form><input id="f" name="app_otp"></form>`],
     ["field labelled for an authenticator", `<form><label for="f">Authentication code</label><input id="f"></form>`],
+    [
+      // Supabase's, as of 2026: the label names the div around the input
+      "field whose wrapper is labelled",
+      `<form><label for="w">Authentication code</label><div id="w"><input id="f" name="code" autocomplete="off" placeholder="XXXXXX"></div></form>`,
+    ],
     ["two-factor field", `<form><input id="f" name="two_factor_token" type="tel"></form>`],
     ["number-typed code", `<form><input id="f" type="number" name="totp"></form>`],
     ["short numeric field named code", `<form><input id="f" name="code" inputmode="numeric"></form>`],
@@ -213,6 +218,10 @@ describe("verification code fields", () => {
     ["phone number", `<form><input id="f" type="tel" name="phone"></form>`],
     ["recovery code", `<form><input id="f" name="recovery_code"></form>`],
     ["plain text field named code", `<form><input id="f" name="code"></form>`],
+    [
+      "field in a labelled wrapper with other fields",
+      `<form><label for="w">Authentication code</label><div id="w"><input id="f" name="note"><input name="other"></div></form>`,
+    ],
     ["field whose name only contains otp", `<form><input id="f" name="footprint" maxlength="6"></form>`],
     ["short numeric field elsewhere", `<form><input id="f" name="quantity" inputmode="numeric" maxlength="4"></form>`],
     ["email verification address", `<form><input id="f" type="email" name="verification_email"></form>`],
