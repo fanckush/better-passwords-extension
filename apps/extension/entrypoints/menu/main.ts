@@ -736,9 +736,9 @@ async function loadPasskeyState() {
 /** A separator and "Show browser passkey list", for login fields. Shows the browser's list once. */
 function passkeyRows(): Node[] {
   if (kind !== "login" || !passkeyShown) return [];
-  const item = row(KEY, "Show browser passkey list", "This time only", async () => {
+  // no close() here: the page closes the menu and leaves the field unfocused (see autofill.content.ts)
+  const item = row(KEY, "Show browser passkey list", "Then click the field again", async () => {
     await send({ type: "release-passkey" }).catch(() => {});
-    close();
   });
   return [h("hr", { class: "separator" }), item];
 }

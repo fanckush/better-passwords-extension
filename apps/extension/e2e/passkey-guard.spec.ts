@@ -62,8 +62,8 @@ test("the menu offers to show the browser's passkey list, once, while the settin
   await expect
     .poll(() => page.evaluate(() => document.documentElement.getAttribute("data-better-passwords-passkey-held")))
     .toBe("false");
-  // the browser shows its list only for the focused field, so the field gets the focus back
-  await expect(page.locator("#user")).toBeFocused();
+  // the menu is closed, and the field is left unfocused: the user's next click on it shows the list
+  await expect(page.locator("#user")).not.toBeFocused();
 });
 
 test("the menu offers the browser's passkey list even when the page holds no request", async ({ context, siteUrl }) => {

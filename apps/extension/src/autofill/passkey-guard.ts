@@ -36,8 +36,10 @@ export function guardConditionalPasskeys(view: Window & typeof globalThis = wind
 
   const root = () => view.document.documentElement;
   const held = new Set<Held>();
+  // after "Show" the page works as with the setting off, until it reloads
+  let released = false;
   // checked at call time: the attribute is set a moment after the page starts, before it asks
-  const guarding = () => root()?.getAttribute(ATTRIBUTE_GUARD) !== "off";
+  const guarding = () => !released && root()?.getAttribute(ATTRIBUTE_GUARD) !== "off";
 
   const update = () => {
     root()?.setAttribute(ATTRIBUTE_HELD, held.size > 0 ? "true" : "false");
@@ -74,6 +76,7 @@ export function guardConditionalPasskeys(view: Window & typeof globalThis = wind
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       held.add(entry);
+      console.debug("[BP passkey] held a conditional request, signal aborted:", signal?.aborted);
       update();
     });
   };
@@ -81,14 +84,37 @@ export function guardConditionalPasskeys(view: Window & typeof globalThis = wind
   // once: held requests go to the browser (the site gets its answer); with none held, the browser's
   // list opens for a fresh request. Requests after that are held again.
   view.addEventListener(EVENT_RELEASE, () => {
+    console.debug(
+      "[BP passkey] release: held",
+      held.size,
+      "focus",
+      view.document.activeElement?.tagName,
+      "userActivation",
+      navigator.userActivation?.isActive,
+    );
+    released = true;
     if (held.size === 0) {
       const challenge = crypto.getRandomValues(new Uint8Array(32));
-      get.call(credentials, { mediation: "conditional", publicKey: { challenge } }).catch(() => {});
+      // the real container: the prototype can't make a request ("Illegal invocation")
+      get.call(navigator.credentials, { mediation: "conditional", publicKey: { challenge } }).then(
+        (r) => console.debug("[BP passkey] fresh request resolved", r?.id),
+        (e) => console.debug("[BP passkey] fresh request rejected", e?.name, e?.message),
+      );
       return;
     }
     for (const entry of [...held]) {
       entry.forget();
-      get.call(entry.container, entry.options).then(entry.resolve, entry.reject);
+      console.debug("[BP passkey] replay, signal aborted:", entry.options.signal?.aborted);
+      get.call(entry.container, entry.options).then(
+        (r) => {
+          console.debug("[BP passkey] replay resolved", r?.id);
+          entry.resolve(r);
+        },
+        (e) => {
+          console.debug("[BP passkey] replay rejected", e?.name, e?.message);
+          entry.reject(e);
+        },
+      );
     }
     update();
   });
