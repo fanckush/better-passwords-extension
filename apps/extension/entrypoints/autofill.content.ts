@@ -117,7 +117,7 @@ export default defineContentScript({
       }
     }
 
-    /** Sends the open menu a message straight (see MenuMessage). */
+    /** Sends the open menu a message straight (see MenuMessage); in Firefox, the background passes it on. */
     function tellMenu(message: DistributiveOmit<MenuMessage, "nonce">) {
       const nonce = menu.nonce;
       if (!nonce) return;

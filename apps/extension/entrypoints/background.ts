@@ -120,8 +120,7 @@ export default defineBackground(() => {
   session.onChange(({ state }) => {
     if ((state === "unlocked") === unlocked) return;
     unlocked = state === "unlocked";
-    const message: MenuMessage = { type: "session-changed", unlocked };
-    void browser.runtime.sendMessage(message).catch(() => {});
+    tellMenus({ type: "session-changed", unlocked });
   });
 
   // A new verification code (one that just arrived by SMS, say): open menus and the popup list again
@@ -132,8 +131,7 @@ export default defineBackground(() => {
     if (!client || announcing.has(client)) return;
     announcing.add(client);
     client.onOneTimeCodeAvailable(() => {
-      const message: MenuMessage = { type: "one-time-codes-changed" };
-      void browser.runtime.sendMessage(message).catch(() => {});
+      tellMenus({ type: "one-time-codes-changed" });
     });
   });
 
@@ -283,7 +281,8 @@ export default defineBackground(() => {
   // Nonces of the menus each tab's content scripts may show, newest last, with the frame showing
   // each. Only our content script learns them; menu.html must present one of its tab's (see the
   // onMessage listener).
-  const menuNonces = new Map<number, { nonce: string; frameId: number }[]>();
+  // `menuFrameId`: the menu's own frame, once it has asked something (Firefox needs it, see tellMenus).
+  const menuNonces = new Map<number, { nonce: string; frameId: number; menuFrameId?: number }[]>();
   const MENU_NONCES_PER_TAB = 8;
 
   function issueMenuNonce(tabId: number, frameId: number): string {
@@ -293,6 +292,20 @@ export default defineBackground(() => {
     const nonces = [...(menuNonces.get(tabId) ?? []), { nonce, frameId }].slice(-MENU_NONCES_PER_TAB);
     menuNonces.set(tabId, nonces);
     return nonce;
+  }
+
+  /**
+   * Tells every open menu, and the popup. Firefox runs the menu like a content script: it hears
+   * only what's sent to its own frame, never a runtime broadcast.
+   */
+  function tellMenus(message: MenuMessage) {
+    void browser.runtime.sendMessage(message).catch(() => {});
+    if (!import.meta.env.FIREFOX) return;
+    for (const [tabId, menus] of menuNonces) {
+      for (const frameId of new Set(menus.map((menu) => menu.menuFrameId))) {
+        if (frameId !== undefined) void browser.tabs.sendMessage(tabId, message, { frameId }).catch(() => {});
+      }
+    }
   }
 
   function isMenuNonce(tabId: number, nonce: unknown): boolean {
@@ -1217,6 +1230,10 @@ export default defineBackground(() => {
         } satisfies Envelope<never>);
         return false;
       }
+      if (isMenu && sender.tab?.id !== undefined && sender.frameId !== undefined) {
+        const menu = menuNonces.get(sender.tab.id)?.find((m) => m.nonce === request.menuNonce);
+        if (menu) menu.menuFrameId = sender.frameId;
+      }
       caller =
         sender.tab?.id === undefined
           ? { kind: "page" }
@@ -1225,6 +1242,19 @@ export default defineBackground(() => {
               tabId: sender.tab.id,
               ...(sender.frameId === undefined ? {} : { frameId: sender.frameId }),
             };
+    } else if (
+      import.meta.env.FIREFOX &&
+      CONTENT_TO_MENU.has((request as { type: string }).type) &&
+      sender.tab?.id !== undefined
+    ) {
+      // Firefox: what our content script tells its menu (see tellMenu) comes here instead, and
+      // goes on to the menu whose nonce that same frame was issued
+      const { nonce } = request as unknown as MenuMessage & { nonce: string };
+      const menu = menuNonces.get(sender.tab.id)?.find((m) => m.nonce === nonce && m.frameId === sender.frameId);
+      if (menu?.menuFrameId !== undefined) {
+        void browser.tabs.sendMessage(sender.tab.id, request, { frameId: menu.menuFrameId }).catch(() => {});
+      }
+      return false;
     } else if (
       sender.tab?.id !== undefined &&
       sender.frameId !== undefined &&
@@ -1258,6 +1288,9 @@ export default defineBackground(() => {
     return true;
   });
 });
+
+/** What the content script sends its menu straight (see MenuMessage); Firefox relays it (see tellMenus). */
+const CONTENT_TO_MENU: ReadonlySet<string> = new Set(["menu-filter", "menu-typing", "menu-placement"]);
 
 async function tabUrl(tabId: number): Promise<URL | undefined> {
   const tab = await browser.tabs.get(tabId);
