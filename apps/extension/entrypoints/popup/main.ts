@@ -317,8 +317,25 @@ function loginList(tabId: number, logins: LoginsResult["logins"], chosen?: strin
   );
 }
 
-/** How long a code fetched for Copy waits for a second click, when the first one couldn't copy it. */
+/** How long a code fetched for Copy stays for another click, which copies it without Touch ID. */
 const COPY_WAIT_MS = 30_000;
+
+/** How long Copy waits for the popup to get focus back after Touch ID before asking for a click. */
+const FOCUS_WAIT_MS = 3_000;
+
+/** Whether the popup gets focus back within `ms`. */
+function focusReturns(ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const done = (focused: boolean) => {
+      clearTimeout(timer);
+      window.removeEventListener("focus", onFocus);
+      resolve(focused);
+    };
+    const onFocus = () => done(true);
+    const timer = setTimeout(() => done(false), ms);
+    window.addEventListener("focus", onFocus);
+  });
+}
 
 /**
  * The site's verification codes. Their digits only come after Touch ID: clicking a code fills
@@ -369,35 +386,52 @@ async function oneTimeCodes(tabId: number) {
     });
 
     const copy = h("button", { class: "secondary", textContent: "Copy" });
-    // fetched, but the browser wouldn't let us copy it any more (Touch ID took a while)
-    let waiting: { digits: string; timer: ReturnType<typeof setTimeout> } | undefined;
-    const forget = () => {
-      if (waiting) clearTimeout(waiting.timer);
-      waiting = undefined;
+    // fetched digits, kept briefly so another click copies them without Touch ID again: after a
+    // copy, or when the browser wouldn't let us copy them any more (Touch ID took a while)
+    let held: { digits: string; timer: ReturnType<typeof setTimeout> } | undefined;
+    const hold = (digits: string) => {
+      if (held) clearTimeout(held.timer);
+      held = {
+        digits,
+        timer: setTimeout(() => {
+          held = undefined;
+          copy.textContent = "Copy";
+        }, COPY_WAIT_MS),
+      };
     };
     const write = async (digits: string) => {
       await navigator.clipboard.writeText(digits);
-      forget();
       copy.textContent = "Copied";
       say("");
     };
+    // copying again changes nothing on screen otherwise (Touch ID marks the first copy)
+    const pulse = () => {
+      copy.classList.remove("copied");
+      void copy.offsetWidth;
+      copy.classList.add("copied");
+    };
     copy.addEventListener("click", async () => {
-      if (waiting) return write(waiting.digits).catch((e) => say(messageOf(e), true));
+      if (held) {
+        return write(held.digits)
+          .then(pulse)
+          .catch((e) => say(messageOf(e), true));
+      }
       copy.disabled = true;
       say(fetchingCode);
       try {
         const { code: digits } = await send({ type: "copy-one-time-code", tabId, id: code.id });
-        await write(digits).catch(() => {
-          waiting = {
-            digits,
-            timer: setTimeout(() => {
-              forget();
-              copy.textContent = "Copy";
-            }, COPY_WAIT_MS),
-          };
-          copy.textContent = "Click to Copy";
-          say("");
-        });
+        hold(digits);
+        // the code can come back just before the browser hands focus back from Touch ID, and the
+        // clipboard is off limits until it does
+        await write(digits)
+          .catch(async () => {
+            if (document.hasFocus() || !(await focusReturns(FOCUS_WAIT_MS))) throw new Error("not focused");
+            await write(digits);
+          })
+          .catch(() => {
+            copy.textContent = "Click to Copy";
+            say("");
+          });
       } catch (e) {
         if ((e as { code?: string }).code !== "superseded") say(messageOf(e), true);
       } finally {
