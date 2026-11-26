@@ -65,6 +65,11 @@ export type Request =
   /** Asks Apple Passwords again to save one of them (from the popup); macOS shows its prompt. */
   | { type: "save-unconfirmed-password"; tabId: number; id: string }
 
+  /** Whether the page has a passkey request held for the browser's passkey list (see passkey-guard.ts). */
+  | { type: "passkey-state" }
+  /** The menu's "Show native passkey": releases the page's held passkey requests until it reloads. */
+  | { type: "release-passkey" }
+
   /** Opens Apple's Passwords app, searching for the tab's site when there is one. */
   | { type: "open-passwords-app"; tabId?: number }
   // content script → background (the only requests content scripts may send)
@@ -80,7 +85,9 @@ export type Request =
   /** The user changed the password after sending it (the site said it was wrong): forget it. */
   | { type: "login-edited" }
   /** The field of the sent login went away (a dialog closed, a step moved on). */
-  | { type: "login-form-gone" };
+  | { type: "login-form-gone" }
+  /** Whether the page's guard holds a passkey request in this frame. */
+  | { type: "passkey-held"; held: boolean };
 
 /** Requests content scripts are allowed to send. */
 export const CONTENT_SCRIPT_REQUESTS: ReadonlySet<Request["type"]> = new Set([
@@ -90,6 +97,7 @@ export const CONTENT_SCRIPT_REQUESTS: ReadonlySet<Request["type"]> = new Set([
   "login-sent",
   "login-edited",
   "login-form-gone",
+  "passkey-held",
 ]);
 
 export interface Settings {
@@ -113,6 +121,8 @@ export interface Settings {
   suggestEmails: boolean;
   /** Mention the companion app under the code box (it skips typing the code) until dismissed. */
   companionCodeHint: boolean;
+  /** Chromium: hide the browser's passkey list on login fields (see passkey-guard.ts). Takes effect on the next page load. */
+  passkeyGuard: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -126,6 +136,7 @@ export const DEFAULT_SETTINGS: Settings = {
   companionEmailsHint: true,
   suggestEmails: true,
   companionCodeHint: true,
+  passkeyGuard: true,
 };
 
 /**
@@ -236,6 +247,7 @@ export type NewPasswordResult = "filled" | "menu-hidden" | "no-fields" | "origin
 /** What each request answers with. Requests not listed answer with the session status. */
 interface Responses {
   "get-status": Status;
+  "passkey-state": { held: boolean };
   "list-logins": LoginsResult;
   fill: { result: string };
   "fill-from-menu": { result: string };
@@ -300,6 +312,8 @@ export type ContentMessage =
   | { type: "fill-one-time-code"; origin: string; code: string }
   /** Apple Passwords has the generated password filled into this page. */
   | { type: "generated-password-saved"; password: string }
+  /** Releases the page's held passkey requests (see passkey-guard.ts). */
+  | { type: "release-passkey" }
   /** Whether the sign-in with the login sent in this tab went through. Answered with a SignInState. */
   | { type: "sign-in-state" };
 

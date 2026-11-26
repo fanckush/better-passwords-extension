@@ -1,4 +1,4 @@
-import { expect, test } from "./fixtures.ts";
+import { choose, expect, menuFrame, test } from "./fixtures.ts";
 
 test("keeps the browser's passkey suggestions out of login fields", async ({ context, siteUrl }) => {
   const page = await context.newPage();
@@ -36,4 +36,29 @@ test("leaves passkeys alone in an iframe of another origin", async ({ context, s
   const isNative = () => PublicKeyCredential.isConditionalMediationAvailable.toString().includes("[native code]");
   expect(await page.evaluate(isNative)).toBe(false);
   expect(await frame?.evaluate(isNative)).toBe(true);
+});
+
+test("the menu offers to show the browser's passkey list while a passkey request is held", async ({
+  context,
+  siteUrl,
+}) => {
+  const page = await context.newPage();
+  await page.goto(`${siteUrl}/login.html`);
+  // what sites do on load: a conditional request, which the guard holds
+  await page.evaluate(() => {
+    void navigator.credentials.get({
+      mediation: "conditional",
+      publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)) },
+    });
+  });
+  await page.locator("#user").click();
+
+  const menu = await menuFrame(page);
+  await expect(menu.getByText("Show native passkey")).toBeVisible();
+
+  // the choice releases the held request: the page's guard no longer holds one
+  await choose(menu, "Show native passkey");
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.getAttribute("data-better-passwords-passkey-held")))
+    .toBe("false");
 });

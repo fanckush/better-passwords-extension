@@ -154,6 +154,7 @@ let showOthers = false;
 
 async function showLogins(error?: string) {
   view = "unlocked";
+  await loadPasskeyState();
   let result: Awaited<ReturnType<typeof send<{ type: "list-logins" }>>>;
   try {
     result = await send({ type: "list-logins" });
@@ -163,7 +164,11 @@ async function showLogins(error?: string) {
   if (result.logins.length === 0) {
     loginsView = undefined;
     if (orGenerate) return showGenerate();
-    return render(message(`No saved passwords for ${result.hostname ?? "this site"}.`), openPasswordsRow(true));
+    return render(
+      message(`No saved passwords for ${result.hostname ?? "this site"}.`),
+      passkeyRow(),
+      openPasswordsRow(true),
+    );
   }
   loginsView = {
     logins: result.logins,
@@ -188,6 +193,7 @@ function renderLogins() {
   render(
     ...shown.map(({ username }) => row(KEY, username || "(no username)", hostname, () => void fill(username))),
     focused ? othersRow(matches.length - 1, renderLogins) : null,
+    passkeyRow(),
     error ? message(error, true) : null,
     h("hr", { class: "separator" }),
     openPasswordsRow(false),
@@ -714,7 +720,26 @@ async function showLocked(error?: string) {
   view = "locked";
   const status = await send({ type: "get-status" }).catch(() => undefined);
   touchId = status?.touchId === true;
-  render(unlockRow(), error ? message(error, true) : null);
+  await loadPasskeyState();
+  render(unlockRow(), passkeyRow(), error ? message(error, true) : null);
+}
+
+/** Whether the page holds a passkey request for the browser's list (see passkey-guard.ts). */
+let passkeyHeld = false;
+
+async function loadPasskeyState() {
+  passkeyHeld = await send({ type: "passkey-state" })
+    .then((state) => state.held)
+    .catch(() => false);
+}
+
+/** Lets the browser show its own passkey list here, until the page reloads. Login fields only. */
+function passkeyRow(): HTMLButtonElement | null {
+  if (kind !== "login" || !passkeyHeld) return null;
+  return row(KEY, "Show native passkey", "The browser's passkey list, until the page reloads", async () => {
+    await send({ type: "release-passkey" }).catch(() => {});
+    close();
+  });
 }
 
 /** Whether the companion app can unlock with Touch ID (as of the last status asked for). */
