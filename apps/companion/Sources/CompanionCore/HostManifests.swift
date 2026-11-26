@@ -28,18 +28,24 @@ public struct Browser: Equatable, Sendable {
     /// its own for most Chromium browsers, Mozilla's shared one for Firefox and its forks, another
     /// browser's for one without its own (Search, Orion).
     public let manifestDirectory: String
+    /// Whether the browser reads its own folder instead when `manifestDirectory`'s
+    /// NativeMessagingHosts can't be created. Brave does: it creates Chrome's at startup and, if
+    /// that fails (the Google folder is locked, say, to keep Google's updater out), keeps its own.
+    public let fallsBackToOwnFolder: Bool
     /// The app's bundle identifier: for its icon, and to tell which browser is asking. nil while
     /// unknown; the browser is then recognised by its name.
     public let bundleID: String?
 
     public init(
-        name: String, dataDirectory: String, kind: Kind, bundleID: String? = nil, manifestDirectory: String? = nil
+        name: String, dataDirectory: String, kind: Kind, bundleID: String? = nil, manifestDirectory: String? = nil,
+        fallsBackToOwnFolder: Bool = false
     ) {
         self.name = name
         self.dataDirectory = dataDirectory
         self.kind = kind
         self.bundleID = bundleID
         self.manifestDirectory = manifestDirectory ?? (kind == .firefox ? "Mozilla" : dataDirectory)
+        self.fallsBackToOwnFolder = fallsBackToOwnFolder
     }
 }
 
@@ -58,16 +64,17 @@ public enum HostManifests {
             bundleID: "com.google.Chrome.canary"),
         Browser(name: "Chromium", dataDirectory: "Chromium", kind: .chromium, bundleID: "org.chromium.Chromium"),
         // Brave reads native messaging hosts from Chrome's folder, not its own (brave-core's
-        // BraveMainDelegate::PreSandboxStartup overrides DIR_USER_NATIVE_MESSAGING on Mac).
+        // BraveMainDelegate::PreSandboxStartup overrides DIR_USER_NATIVE_MESSAGING on Mac), unless
+        // it can't create Chrome's: then the override fails and it reads its own.
         Browser(
             name: "Brave", dataDirectory: "BraveSoftware/Brave-Browser", kind: .chromium, bundleID: "com.brave.Browser",
-            manifestDirectory: "Google/Chrome"),
+            manifestDirectory: "Google/Chrome", fallsBackToOwnFolder: true),
         Browser(
             name: "Brave Beta", dataDirectory: "BraveSoftware/Brave-Browser-Beta", kind: .chromium,
-            bundleID: "com.brave.Browser.beta", manifestDirectory: "Google/Chrome"),
+            bundleID: "com.brave.Browser.beta", manifestDirectory: "Google/Chrome", fallsBackToOwnFolder: true),
         Browser(
             name: "Brave Origin", dataDirectory: "BraveSoftware/Brave-Origin", kind: .chromium,
-            bundleID: "com.brave.Browser.origin", manifestDirectory: "Google/Chrome"),
+            bundleID: "com.brave.Browser.origin", manifestDirectory: "Google/Chrome", fallsBackToOwnFolder: true),
         Browser(
             name: "Microsoft Edge", dataDirectory: "Microsoft Edge", kind: .chromium, bundleID: "com.microsoft.edgemac"),
         Browser(name: "Vivaldi", dataDirectory: "Vivaldi", kind: .chromium, bundleID: "com.vivaldi.Vivaldi"),
@@ -113,8 +120,30 @@ public enum HostManifests {
         return contents.subtracting([".DS_Store"]) != ["NativeMessagingHosts"]
     }
 
+    /// The NativeMessagingHosts folder the browser reads. For one that falls back to its own
+    /// folder, that's its own while the shared one doesn't exist (see `install`).
     public static func directory(for browser: Browser, in support: URL) -> URL {
+        let shared = sharedDirectory(for: browser, in: support)
+        guard browser.fallsBackToOwnFolder else { return shared }
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: shared.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            return shared
+        }
+        return ownDirectory(for: browser, in: support)
+    }
+
+    private static func sharedDirectory(for browser: Browser, in support: URL) -> URL {
         support.appendingPathComponent(browser.manifestDirectory).appendingPathComponent("NativeMessagingHosts")
+    }
+
+    private static func ownDirectory(for browser: Browser, in support: URL) -> URL {
+        support.appendingPathComponent(browser.dataDirectory).appendingPathComponent("NativeMessagingHosts")
+    }
+
+    /// Every folder the browser may read, for removing our manifests from all of them.
+    private static func directories(for browser: Browser, in support: URL) -> [URL] {
+        let shared = sharedDirectory(for: browser, in: support)
+        return browser.fallsBackToOwnFolder ? [shared, ownDirectory(for: browser, in: support)] : [shared]
     }
 
     /// The two manifests for one browser.
@@ -166,9 +195,16 @@ public enum HostManifests {
     }
 
     /// Writes both manifests for one browser (and so for the browsers `sharing` its folder).
+    /// A browser that falls back to its own folder gets the manifests where it will look: the
+    /// shared folder if it exists or can be created (the browser creates it too), its own if not.
     public static func install(_ browser: Browser, hostPath: String, support: URL) throws {
-        let directory = directory(for: browser, in: support)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var directory = sharedDirectory(for: browser, in: support)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch  where browser.fallsBackToOwnFolder {
+            directory = ownDirectory(for: browser, in: support)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
         for manifest in manifests(for: browser, hostPath: hostPath) {
             try encode(manifest).write(to: directory.appendingPathComponent("\(manifest.name).json"), options: .atomic)
         }
@@ -181,16 +217,18 @@ public enum HostManifests {
 
     /// Removes our manifests from one browser (and so from the browsers `sharing` its folder).
     public static func uninstall(_ browser: Browser, support: URL) {
-        let directory = directory(for: browser, in: support)
-        for name in [Identity.bridgeHost, Identity.companionHost] {
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent("\(name).json"))
+        for directory in directories(for: browser, in: support) {
+            for name in [Identity.bridgeHost, Identity.companionHost] {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent("\(name).json"))
+            }
         }
     }
 
     /// The installed browsers that read their manifests from `browser`'s folder, `browser` included:
     /// Firefox and its forks all read Mozilla's, so they connect and disconnect together.
     public static func sharing(_ browser: Browser, in support: URL) -> [Browser] {
-        installed(in: support).filter { $0.manifestDirectory == browser.manifestDirectory }
+        let directory = directory(for: browser, in: support)
+        return installed(in: support).filter { self.directory(for: $0, in: support) == directory }
     }
 
     /// The known browser an app is: by its bundle identifier, or by its name for a browser whose

@@ -21,15 +21,17 @@ SUPPORT="$HOME/Library/Application Support"
 # Chromium-based browsers: the path of their user data directory under Application Support, their
 # name, and the directory whose NativeMessagingHosts they read when it isn't their own (Search and
 # Orion, WebKit browsers, have none and read Chromium's or Chrome's among others; Brave reads
-# Chrome's). Keep in sync with HostManifests.browsers in the companion app.
+# Chrome's), and "own" for a browser that reads its own instead when it can't create that one
+# (Brave, when the Google folder is locked). Keep in sync with HostManifests.browsers in the
+# companion app.
 BROWSERS="Google/Chrome|Google Chrome
 Google/Chrome Beta|Google Chrome Beta
 Google/Chrome Dev|Google Chrome Dev
 Google/Chrome Canary|Google Chrome Canary
 Chromium|Chromium
-BraveSoftware/Brave-Browser|Brave|Google/Chrome
-BraveSoftware/Brave-Browser-Beta|Brave Beta|Google/Chrome
-BraveSoftware/Brave-Origin|Brave Origin|Google/Chrome
+BraveSoftware/Brave-Browser|Brave|Google/Chrome|own
+BraveSoftware/Brave-Browser-Beta|Brave Beta|Google/Chrome|own
+BraveSoftware/Brave-Origin|Brave Origin|Google/Chrome|own
 Microsoft Edge|Microsoft Edge
 Vivaldi|Vivaldi
 Arc/User Data|Arc
@@ -136,10 +138,17 @@ browser_installed() {
     [ ! -d "$1/NativeMessagingHosts" ]
 }
 
-while IFS='|' read -r browser name manifests; do
+while IFS='|' read -r browser name manifests fallback; do
     browser_installed "$SUPPORT/$browser" || continue
     dir="$SUPPORT/${manifests:-$browser}/NativeMessagingHosts"
-    if [ "$uninstall" -eq 1 ]; then remove_manifest "$dir"; else write_manifest "$dir" allowed_origins "$origins"; fi
+    own="$SUPPORT/$browser/NativeMessagingHosts"
+    if [ "$uninstall" -eq 1 ]; then
+        remove_manifest "$dir"
+        if [ -n "$fallback" ]; then remove_manifest "$own"; fi
+    else
+        if [ -n "$fallback" ] && [ "$dry_run" -eq 0 ] && ! mkdir -p "$dir" 2>/dev/null; then dir="$own"; fi
+        write_manifest "$dir" allowed_origins "$origins"
+    fi
     add_connected "$name"
 done <<EOF
 $BROWSERS

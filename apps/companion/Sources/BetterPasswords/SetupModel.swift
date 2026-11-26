@@ -68,8 +68,9 @@ final class SetupModel {
                 connected
                 ? (blockedBrowsers.contains(browser.name) ? .blocked : .connected)
                 : (disconnectedBrowsers.contains(browser.name) ? .disconnected : .notConnected)
+            let directory = HostManifests.directory(for: browser, in: support)
             let shared = installedBrowsers.filter {
-                $0.manifestDirectory == browser.manifestDirectory && $0.name != browser.name
+                $0.name != browser.name && HostManifests.directory(for: $0, in: support) == directory
             }
             return BrowserRow(browser: browser, state: state, sharedWith: shared.map(\.name))
         }
