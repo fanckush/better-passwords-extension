@@ -166,8 +166,8 @@ async function showLogins(error?: string) {
     if (orGenerate) return showGenerate();
     return render(
       message(`No saved passwords for ${result.hostname ?? "this site"}.`),
-      passkeyRow(),
       openPasswordsRow(true),
+      ...passkeyRows(),
     );
   }
   loginsView = {
@@ -193,10 +193,10 @@ function renderLogins() {
   render(
     ...shown.map(({ username }) => row(KEY, username || "(no username)", hostname, () => void fill(username))),
     focused ? othersRow(matches.length - 1, renderLogins) : null,
-    passkeyRow(),
     error ? message(error, true) : null,
     h("hr", { class: "separator" }),
     openPasswordsRow(false),
+    ...passkeyRows(),
   );
 }
 
@@ -721,25 +721,26 @@ async function showLocked(error?: string) {
   const status = await send({ type: "get-status" }).catch(() => undefined);
   touchId = status?.touchId === true;
   await loadPasskeyState();
-  render(unlockRow(), passkeyRow(), error ? message(error, true) : null);
+  render(unlockRow(), error ? message(error, true) : null, ...passkeyRows());
 }
 
-/** Whether the page holds a passkey request for the browser's list (see passkey-guard.ts). */
-let passkeyHeld = false;
+/** Whether the menu offers the browser's passkey list here (the setting is on, not released yet). */
+let passkeyShown = false;
 
 async function loadPasskeyState() {
-  passkeyHeld = await send({ type: "passkey-state" })
-    .then((state) => state.held)
+  passkeyShown = await send({ type: "passkey-state" })
+    .then((state) => state.shown)
     .catch(() => false);
 }
 
-/** Lets the browser show its own passkey list here, until the page reloads. Login fields only. */
-function passkeyRow(): HTMLButtonElement | null {
-  if (kind !== "login" || !passkeyHeld) return null;
-  return row(KEY, "Show native passkey", "The browser's passkey list, until the page reloads", async () => {
+/** A separator and "Show browser passkey list", for login fields. Clicking it shows the list right away. */
+function passkeyRows(): Node[] {
+  if (kind !== "login" || !passkeyShown) return [];
+  const item = row(KEY, "Show browser passkey list", "", async () => {
     await send({ type: "release-passkey" }).catch(() => {});
     close();
   });
+  return [h("hr", { class: "separator" }), item];
 }
 
 /** Whether the companion app can unlock with Touch ID (as of the last status asked for). */

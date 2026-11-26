@@ -85,9 +85,7 @@ export type Request =
   /** The user changed the password after sending it (the site said it was wrong): forget it. */
   | { type: "login-edited" }
   /** The field of the sent login went away (a dialog closed, a step moved on). */
-  | { type: "login-form-gone" }
-  /** Whether the page's guard holds a passkey request in this frame. */
-  | { type: "passkey-held"; held: boolean };
+  | { type: "login-form-gone" };
 
 /** Requests content scripts are allowed to send. */
 export const CONTENT_SCRIPT_REQUESTS: ReadonlySet<Request["type"]> = new Set([
@@ -97,7 +95,6 @@ export const CONTENT_SCRIPT_REQUESTS: ReadonlySet<Request["type"]> = new Set([
   "login-sent",
   "login-edited",
   "login-form-gone",
-  "passkey-held",
 ]);
 
 export interface Settings {
@@ -247,7 +244,7 @@ export type NewPasswordResult = "filled" | "menu-hidden" | "no-fields" | "origin
 /** What each request answers with. Requests not listed answer with the session status. */
 interface Responses {
   "get-status": Status;
-  "passkey-state": { held: boolean };
+  "passkey-state": { shown: boolean };
   "list-logins": LoginsResult;
   fill: { result: string };
   "fill-from-menu": { result: string };

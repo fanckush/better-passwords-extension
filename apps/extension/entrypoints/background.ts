@@ -773,10 +773,6 @@ export default defineBackground(() => {
     if (caller.kind === "content-script") {
       if (request.type === "autofill-status")
         return autofillStatus(caller, request.kind, request.unsure, request.signIn);
-      if (request.type === "passkey-held") {
-        setPasskeyHeld(caller.tabId, caller.frameId, request.held);
-        return null;
-      }
       if (request.type === "generated-username") {
         trackUsername(caller, request.username);
         return null;
@@ -1055,13 +1051,16 @@ export default defineBackground(() => {
       case "open-icloud":
         await browser.tabs.create({ url: "https://www.icloud.com/" });
         return null;
-      case "passkey-state":
-        return { held: (passkeysHeld.get(tabOf(caller))?.size ?? 0) > 0 };
+      case "passkey-state": {
+        const tabId = tabOf(caller);
+        const settings = await getSettings();
+        return { shown: settings.passkeyGuard && !passkeysReleased.has(tabId) };
+      }
       case "release-passkey": {
         const tabId = tabOf(caller);
-        const frames = [...(passkeysHeld.get(tabId) ?? [])];
-        passkeysHeld.delete(tabId);
-        // the page's own frames that hold a request; the rest of the page is untouched
+        passkeysReleased.add(tabId);
+        // every frame of the page: a frame without a held request just ignores it
+        const frames = await pageFrames(tabId).catch(() => [0]);
         await Promise.all(frames.map((frameId) => relay(tabId, { type: "release-passkey" }, frameId).catch(() => {})));
         return null;
       }
@@ -1070,18 +1069,11 @@ export default defineBackground(() => {
     }
   }
 
-  /** Frames of each tab whose page holds a passkey request for the browser's list (see passkey-guard.ts). */
-  const passkeysHeld = new Map<number, Set<number>>();
-  function setPasskeyHeld(tabId: number, frameId: number, held: boolean) {
-    const frames = passkeysHeld.get(tabId) ?? new Set<number>();
-    if (held) frames.add(frameId);
-    else frames.delete(frameId);
-    if (frames.size > 0) passkeysHeld.set(tabId, frames);
-    else passkeysHeld.delete(tabId);
-  }
-  // a new page in the tab starts with no held requests
+  /** Tabs whose page shows the browser's passkey list, released by the user, until the page reloads. */
+  const passkeysReleased = new Set<number>();
+  // a new page in the tab starts with the list hidden again
   browser.tabs.onUpdated.addListener((tabId, change) => {
-    if (change.status === "loading") passkeysHeld.delete(tabId);
+    if (change.status === "loading") passkeysReleased.delete(tabId);
   });
 
   /** The frames that may be filled for the tab, the page's own first. */

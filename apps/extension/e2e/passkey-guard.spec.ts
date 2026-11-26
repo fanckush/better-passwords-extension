@@ -38,27 +38,22 @@ test("leaves passkeys alone in an iframe of another origin", async ({ context, s
   expect(await frame?.evaluate(isNative)).toBe(true);
 });
 
-test("the menu offers to show the browser's passkey list while a passkey request is held", async ({
+test("the menu offers to show the browser's passkey list, and stops offering it once shown", async ({
   context,
   siteUrl,
 }) => {
   const page = await context.newPage();
   await page.goto(`${siteUrl}/login.html`);
-  // what sites do on load: a conditional request, which the guard holds
-  await page.evaluate(() => {
-    void navigator.credentials.get({
-      mediation: "conditional",
-      publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)) },
-    });
-  });
   await page.locator("#user").click();
 
   const menu = await menuFrame(page);
-  await expect(menu.getByText("Show native passkey")).toBeVisible();
+  await expect(menu.getByText("Show browser passkey list")).toBeVisible();
 
-  // the choice releases the held request: the page's guard no longer holds one
-  await choose(menu, "Show native passkey");
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.getAttribute("data-better-passwords-passkey-held")))
-    .toBe("false");
+  // choosing it releases the page: the menu closes, and it doesn't offer the list again until a reload
+  await choose(menu, "Show browser passkey list");
+  await expect.poll(() => page.frames().some((f) => f.url().includes("/menu.html#"))).toBe(false);
+  await page.keyboard.press("Escape");
+  await page.locator("#user").click();
+  const again = await menuFrame(page);
+  await expect(again.getByText("Show browser passkey list")).toHaveCount(0);
 });
