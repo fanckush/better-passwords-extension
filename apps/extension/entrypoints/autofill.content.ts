@@ -8,7 +8,7 @@ import {
   oneTimeCodeGroup,
 } from "@/src/autofill/fields.ts";
 import { MenuHost } from "@/src/autofill/menu-host.ts";
-import { EVENT_RELEASE } from "@/src/autofill/passkey-guard.ts";
+import { ATTRIBUTE_HELD, EVENT_HELD, EVENT_RELEASE } from "@/src/autofill/passkey-guard.ts";
 import {
   isGone,
   isUsernameInput,
@@ -324,6 +324,14 @@ export default defineContentScript({
     }
 
     // messages relayed by the background from our menu page; only our extension can send these
+    // a passkey request the page's guard holds (see passkey-guard.ts): the menu offers to release it
+    const reportPasskeys = () => {
+      const held = document.documentElement.getAttribute(ATTRIBUTE_HELD) === "true";
+      void browser.runtime.sendMessage({ type: "passkey-held", held }).catch(() => {});
+    };
+    window.addEventListener(EVENT_HELD, reportPasskeys);
+    reportPasskeys();
+
     browser.runtime.onMessage.addListener((message: ContentMessage, sender, sendResponse) => {
       if (sender.id !== browser.runtime.id) return false;
       if (message.type === "release-passkey") {

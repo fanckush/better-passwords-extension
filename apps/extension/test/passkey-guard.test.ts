@@ -89,8 +89,8 @@ describe("guardConditionalPasskeys", () => {
     expect(nativeGet.mock.contexts[0]).toBe(credentials);
   });
 
-  it("releases held requests to the browser, and later ones pass through", async () => {
-    const { view, credentials, nativeGet, PublicKeyCredential, root, events } = fakeWindow();
+  it("releases held requests to the browser once, and later requests are held again", async () => {
+    const { view, credentials, nativeGet, root, events } = fakeWindow();
     guardConditionalPasskeys(view);
     const held = credentials.get(conditional());
     expect(await settled(held)).toBe(false);
@@ -98,10 +98,10 @@ describe("guardConditionalPasskeys", () => {
     events.dispatchEvent(new Event(EVENT_RELEASE));
     await expect(held).resolves.toEqual({ id: "from-browser", mediation: "conditional" });
     expect(root.getAttribute(ATTRIBUTE_HELD)).toBe("false");
-    await expect(credentials.get(conditional())).resolves.toEqual({ id: "from-browser", mediation: "conditional" });
-    expect(nativeGet).toHaveBeenCalledTimes(2);
-    // the browser's own answer again, after the release
-    await expect(PublicKeyCredential.isConditionalMediationAvailable()).resolves.toBe(true);
+    expect(nativeGet).toHaveBeenCalledTimes(1);
+    // the next request is held again
+    expect(await settled(credentials.get(conditional()))).toBe(false);
+    expect(root.getAttribute(ATTRIBUTE_HELD)).toBe("true");
   });
 
   it("passes the browser's failure of a released request to the site", async () => {

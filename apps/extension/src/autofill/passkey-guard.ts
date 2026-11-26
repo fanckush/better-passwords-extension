@@ -35,10 +35,9 @@ export function guardConditionalPasskeys(view: Window & typeof globalThis = wind
   if (!credentials || !publicKey) return;
 
   const root = () => view.document.documentElement;
-  let released = false;
   const held = new Set<Held>();
   // checked at call time: the attribute is set a moment after the page starts, before it asks
-  const guarding = () => !released && root()?.getAttribute(ATTRIBUTE_GUARD) !== "off";
+  const guarding = () => root()?.getAttribute(ATTRIBUTE_GUARD) !== "off";
 
   const update = () => {
     root()?.setAttribute(ATTRIBUTE_HELD, held.size > 0 ? "true" : "false");
@@ -61,7 +60,7 @@ export function guardConditionalPasskeys(view: Window & typeof globalThis = wind
     if (options?.mediation !== "conditional" || !options.publicKey || !guarding()) {
       return get.call(this, options);
     }
-    // as if the user never picked a passkey: it ends only when the site aborts it, or it's released
+    // as if the user never picked a passkey: it ends when the site aborts it, or when the user shows it once
     const signal = options.signal;
     if (signal?.aborted) return Promise.reject(signal.reason);
     return new Promise<Credential | null>((resolve, reject) => {
@@ -87,7 +86,6 @@ export function guardConditionalPasskeys(view: Window & typeof globalThis = wind
   };
 
   view.addEventListener(EVENT_RELEASE, () => {
-    released = true;
     for (const entry of [...held]) {
       entry.forget();
       get.call(entry.container, entry.options).then(entry.resolve, entry.reject);
