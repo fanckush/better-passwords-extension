@@ -327,6 +327,12 @@ export default defineContentScript({
     browser.runtime.onMessage.addListener((message: ContentMessage, sender, sendResponse) => {
       if (sender.id !== browser.runtime.id) return false;
       if (message.type === "release-passkey") {
+        // the browser shows its list only for a focused field that asks for passkeys: focus the
+        // field the menu was opened on (the menu itself has the focus), then release
+        const anchor = menu.anchor;
+        dismissed = anchor;
+        menu.close();
+        anchor?.focus();
         window.dispatchEvent(new Event(EVENT_RELEASE));
         return false;
       }
