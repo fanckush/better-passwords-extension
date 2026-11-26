@@ -40,8 +40,14 @@ export type Request =
   // Hide My Email, on email fields (the menu is bound to its tab)
   /** `logins`: the site's saved logins too (an email field that may sign in). */
   | { type: "email-suggestions"; nonce: string; logins?: boolean }
-  /** The user clicked the hint: turn Hide My Email on. */
+  /**
+   * The user clicked the hint: turn Hide My Email on. Firefox first needs the user's OK to send data
+   * to iCloud, which the menu can't ask for: the popup opens to ask, and the menu hears back (see
+   * MenuMessage "hide-my-email-changed").
+   */
   | { type: "enable-hide-my-email"; nonce: string }
+  /** The popup, as it opens: whether it was opened to ask for Hide My Email's permissions. */
+  | { type: "popup-intent" }
   | { type: "dismiss-hide-my-email-hint" }
   | { type: "generate-hide-my-email"; nonce: string }
   /** Fills an address in; a new (generated) one is reserved for the site first. */
@@ -253,7 +259,9 @@ interface Responses {
   "unconfirmed-passwords": { id: string; username: string }[];
   "save-unconfirmed-password": null;
   "email-suggestions": EmailSuggestions;
-  "enable-hide-my-email": EmailSuggestions;
+  /** `asking`: the popup (or, if it can't open, a small window) asks for Firefox's permission. */
+  "enable-hide-my-email": EmailSuggestions | { asking: true };
+  "popup-intent": { hideMyEmailConsent: boolean };
   "dismiss-hide-my-email-hint": null;
   "generate-hide-my-email": { address: string };
   "use-hide-my-email": { result: string };
@@ -327,7 +335,9 @@ export type MenuMessage =
   /** Sent by the background to every extension page when the session unlocks or locks (say, from the popup). */
   | { type: "session-changed"; unlocked: boolean }
   /** Sent by the background when Apple Passwords has a new verification code: list them again. */
-  | { type: "one-time-codes-changed" };
+  | { type: "one-time-codes-changed" }
+  /** Sent by the background to the menu that asked to turn Hide My Email on: it was, or the user said no. */
+  | { type: "hide-my-email-changed" };
 
 export interface NewPasswordContext {
   rules: FieldRules;

@@ -1,6 +1,6 @@
 import "./style.css";
 import { DISPLAY_NAME } from "@/src/config.ts";
-import { requestHideMyEmailConsent } from "@/src/icloud/consent.ts";
+import { HME_CONSENT_PORT, requestHideMyEmailConsent } from "@/src/icloud/consent.ts";
 import { type LoginsResult, type OneTimeCodesResult, type Settings, type Status, send } from "@/src/messages.ts";
 import { computerName, platform } from "@/src/platform.ts";
 import { applySystemAccent } from "@/src/ui/accent.ts";
@@ -570,6 +570,42 @@ async function openCompanion(type: "open-companion-app" | "open-companion-page")
   window.close();
 }
 
+/**
+ * Firefox: opened from an email field's menu, which can't ask for Hide My Email's permissions
+ * itself. The background tells that menu once this closes, and turns Hide My Email on when Firefox
+ * grants them (even if Firefox closes this popup as its prompt opens).
+ */
+function showHideMyEmailConsent() {
+  browser.runtime.connect({ name: HME_CONSENT_PORT });
+  const notNow = h("button", { class: "secondary", textContent: "Not Now" });
+  notNow.addEventListener("click", () => window.close());
+  const turnOn = h("button", { class: "primary", textContent: "Turn On" });
+  const error = h("p", { class: "error", hidden: true });
+  turnOn.addEventListener("click", async () => {
+    try {
+      if (await requestHideMyEmailConsent()) await send({ type: "set-settings", settings: { hideMyEmail: true } });
+      window.close();
+    } catch (e) {
+      error.textContent = messageOf(e);
+      error.hidden = false;
+    }
+  });
+  show(
+    h("h1", { textContent: "Turn On Hide My Email" }),
+    h("p", {}, "Get a unique iCloud+ address for each site, labeled with its name."),
+    h("p", { class: "hint" }, "Firefox will ask you to allow this, since the site's name is sent to iCloud."),
+    error,
+    h("div", { class: "actions end" }, notNow, turnOn),
+  );
+  turnOn.focus();
+}
+
+async function start() {
+  const intent = await send({ type: "popup-intent" }).catch(() => undefined);
+  if (intent?.hideMyEmailConsent) return showHideMyEmailConsent();
+  await refresh();
+}
+
 function messageOf(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error ?? "");
   return text || "Something went wrong. Try again, or reload the extension.";
@@ -580,4 +616,4 @@ void platform()
     computer = computerName(os);
     if (os === "windows") fetchingCode = "Getting the code…";
   })
-  .finally(() => void refresh());
+  .finally(() => void start());

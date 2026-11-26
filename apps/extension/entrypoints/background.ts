@@ -4,7 +4,7 @@ import type { FieldKind } from "@/src/autofill/fields.ts";
 import { Companion } from "@/src/companion.ts";
 import { BRIDGE_HOST } from "@/src/config.ts";
 import { fillCredentials } from "@/src/fill.ts";
-import { hasHideMyEmailConsent } from "@/src/icloud/consent.ts";
+import { HME_CONSENT_PORT, hasHideMyEmailConsent } from "@/src/icloud/consent.ts";
 import { HEADER_RULE_ID, HideMyEmail, headerRule, ICloudError } from "@/src/icloud/hide-my-email.ts";
 import {
   type AutofillStatus,
@@ -261,7 +261,7 @@ export default defineBackground(() => {
    * menu iframe), every tab-scoped request is bound to that tab, whatever `tabId` they pass.
    */
   type Caller =
-    | { kind: "page"; tabId?: number }
+    | { kind: "page"; tabId?: number; frameId?: number }
     | { kind: "content-script"; tabId: number; frameId: number; url: string };
 
   function tabOf(caller: Caller, requested?: number): number {
@@ -656,6 +656,55 @@ export default defineBackground(() => {
         if (!allowed) return saveSettings({ hideMyEmail: false });
       });
     });
+    // These permissions are only for Hide My Email, so allowing them turns it on: from our popup
+    // (which Firefox may close as its prompt opens, before it hears the answer) or about:addons
+    browser.permissions.onAdded.addListener(() => {
+      void hasHideMyEmailConsent().then(async (allowed) => {
+        if (!allowed) return;
+        await saveSettings({ hideMyEmail: true });
+        if (consentAsk) tellConsentMenu(consentAsk);
+      });
+    });
+    browser.runtime.onConnect.addListener((port) => {
+      if (port.name !== HME_CONSENT_PORT || port.sender?.url !== browser.runtime.getURL("/popup.html")) return;
+      const ask = consentAsk;
+      // closed: allowed, declined or dismissed, the menu shows what it now can
+      port.onDisconnect.addListener(() => {
+        if (!ask) return;
+        if (consentAsk === ask) consentAsk = undefined;
+        tellConsentMenu(ask);
+      });
+    });
+  }
+
+  /**
+   * Firefox: the inline menu that asked to turn Hide My Email on, while the popup asks for the
+   * permissions (a page's frame can't ask itself). Kept a minute for the popup to pick up.
+   */
+  let consentAsk: { tabId: number; frameId: number; at: number } | undefined;
+  const CONSENT_ASK_MS = 60_000;
+
+  function tellConsentMenu({ tabId, frameId }: { tabId: number; frameId: number }) {
+    const message: MenuMessage = { type: "hide-my-email-changed" };
+    // the menu runs like a content script in Firefox, so it hears only messages sent to its tab
+    void browser.tabs.sendMessage(tabId, message, { frameId }).catch(() => {});
+  }
+
+  /** Opens the popup to ask for Hide My Email's permissions, or a small window if it can't open. */
+  async function askHideMyEmailConsent(tabId: number, frameId: number) {
+    consentAsk = { tabId, frameId, at: Date.now() };
+    try {
+      // Firefox's browserAction has openPopup; WXT's (Chrome's) types don't list it
+      await (browser.browserAction as unknown as { openPopup(): Promise<void> }).openPopup();
+    } catch {
+      // another panel is open, or the window lost focus meanwhile
+      await browser.windows.create({
+        type: "popup",
+        url: browser.runtime.getURL("/popup.html"),
+        width: 360,
+        height: 260,
+      });
+    }
   }
 
   /** What email fields offer: the site's saved logins first, then Hide My Email, the user's own emails below. */
@@ -988,9 +1037,23 @@ export default defineBackground(() => {
         return saveSettings(request.settings);
       case "email-suggestions":
         return emailSuggestions(tabOf(caller), request.logins);
-      case "enable-hide-my-email":
+      case "enable-hide-my-email": {
+        const tabId = tabOf(caller);
+        if (!(await hasHideMyEmailConsent())) {
+          if (caller.kind !== "page" || caller.frameId === undefined) throw new Error("no menu to answer");
+          await askHideMyEmailConsent(tabId, caller.frameId);
+          return { asking: true };
+        }
         await saveSettings({ hideMyEmail: true });
-        return emailSuggestions(tabOf(caller));
+        return emailSuggestions(tabId);
+      }
+      case "popup-intent": {
+        const ask = consentAsk;
+        const hideMyEmailConsent = ask !== undefined && Date.now() - ask.at < CONSENT_ASK_MS;
+        // asked once: opened again later, the popup is its usual self
+        if (ask) ask.at = 0;
+        return { hideMyEmailConsent };
+      }
       case "dismiss-hide-my-email-hint":
         await saveSettings({ hideMyEmailHint: false });
         return null;
@@ -1154,7 +1217,14 @@ export default defineBackground(() => {
         } satisfies Envelope<never>);
         return false;
       }
-      caller = sender.tab?.id === undefined ? { kind: "page" } : { kind: "page", tabId: sender.tab.id };
+      caller =
+        sender.tab?.id === undefined
+          ? { kind: "page" }
+          : {
+              kind: "page",
+              tabId: sender.tab.id,
+              ...(sender.frameId === undefined ? {} : { frameId: sender.frameId }),
+            };
     } else if (
       sender.tab?.id !== undefined &&
       sender.frameId !== undefined &&

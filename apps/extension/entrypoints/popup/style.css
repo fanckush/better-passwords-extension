@@ -141,6 +141,10 @@ code {
   gap: 8px;
 }
 
+.actions.end {
+  justify-content: flex-end;
+}
+
 button.primary,
 button.secondary,
 button.link {
