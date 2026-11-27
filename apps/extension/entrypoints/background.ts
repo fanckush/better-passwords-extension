@@ -1042,6 +1042,7 @@ export default defineBackground(() => {
       case "menu-resize":
       case "menu-close":
       case "menu-focus-field":
+      case "menu-show-passkeys":
         await relay(tabOf(caller), request).catch(() => {});
         return null;
       case "get-settings":

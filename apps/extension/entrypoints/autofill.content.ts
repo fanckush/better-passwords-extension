@@ -9,6 +9,12 @@ import {
 } from "@/src/autofill/fields.ts";
 import { MenuHost } from "@/src/autofill/menu-host.ts";
 import {
+  ATTRIBUTE_ORIGINAL,
+  hasHiddenPasskeyList,
+  restorePasskeyList,
+  showPasskeyListOnce,
+} from "@/src/autofill/passkey-list.ts";
+import {
   isGone,
   isUsernameInput,
   isUserSubmit,
@@ -57,6 +63,8 @@ export default defineContentScript({
     let dismissedCode = new Set<HTMLInputElement>();
     // a code being filled moves focus from box to box: no menu for those
     let fillingCode = false;
+    // the field showing the browser's passkey list instead of our menu, until the user leaves it
+    let browserList: HTMLInputElement | undefined;
 
     /** Keeps the menu closed on `field`, and on every box of its code if it's one. */
     function dismiss(field: HTMLInputElement | undefined) {
@@ -72,6 +80,7 @@ export default defineContentScript({
 
     async function offer(field: HTMLInputElement, kind: FieldKind) {
       if (menu.anchor === field || dismissed === field || dismissedCode.has(field) || fillingCode) return;
+      if (field === browserList) return;
       // like Safari: a code is offered while the field is empty, not over one being typed
       if (kind === "one-time-code" && oneTimeCodeGroup(field).some((box) => box.value !== "")) return;
       const ticket = ++request;
@@ -84,8 +93,11 @@ export default defineContentScript({
       }));
       // the user may have moved on while we asked
       if (ticket !== request || document.activeElement !== field) return;
+      const passkeys = hasHiddenPasskeyList(field);
       if (nonce === undefined) {
         menu.close();
+        // no menu here, so nothing can show the browser's passkey list on request: give it back
+        restorePasskeyList(field);
       } else if ((kind === "new-password" || (unsure && field === generated?.field)) && field.value !== "") {
         // our own password: say it's saved; one the user typed: stay out of the way
         if (show !== "none" && generated?.field.form === field.form && field.value === generated.value) {
@@ -96,13 +108,13 @@ export default defineContentScript({
           menu.close();
         }
       } else if (show === "email" && kind === "email") {
-        menu.open(field, "email", kind, nonce, { logins: signIn });
+        menu.open(field, "email", kind, nonce, { logins: signIn, passkeys });
       } else if (show === "codes" && kind === "one-time-code") {
         menu.open(field, "codes", kind, nonce);
       } else if (show === "logins" || show === "generate" || show === "locked" || show === "setup") {
         // "locked" and "setup" too: login fields include guessed usernames, but only next to a
         // password field, and the email field is usually the first one people click
-        menu.open(field, show, kind, nonce, { orGenerate: orGenerate ?? false });
+        menu.open(field, show, kind, nonce, { orGenerate: orGenerate ?? false, passkeys });
       } else {
         menu.close();
       }
@@ -123,6 +135,19 @@ export default defineContentScript({
       if (!nonce) return;
       void browser.runtime.sendMessage({ ...message, nonce } as MenuMessage).catch(() => {});
     }
+
+    /**
+     * Tells the open menu that the browser's passkey list is hidden on its field, when the page tagged
+     * the field after the menu opened (GitHub's autofocused username field). The menu ignores repeats.
+     */
+    function offerPasskeys() {
+      if (menu.isOpen && menu.anchor && hasHiddenPasskeyList(menu.anchor)) tellMenu({ type: "menu-passkeys" });
+    }
+    const passkeysHidden = new MutationObserver((records) => {
+      if (records.some((record) => record.target === menu.anchor)) offerPasskeys();
+    });
+    passkeysHidden.observe(document, { subtree: true, attributes: true, attributeFilter: [ATTRIBUTE_ORIGINAL] });
+    ctx.onInvalidated(() => passkeysHidden.disconnect());
 
     /** Tells the open menu what's typed in its username field, so it lists only the logins that match. */
     function filterMenu(query: string) {
@@ -375,6 +400,8 @@ export default defineContentScript({
       switch (message.type) {
         case "menu-resize":
           menu.resize(message.height);
+          // the menu has drawn, so it hears a message that came too early for it
+          offerPasskeys();
           return false;
         case "menu-close": {
           const anchor = menu.anchor;
@@ -386,6 +413,17 @@ export default defineContentScript({
         case "menu-focus-field":
           menu.anchor?.focus();
           return false;
+        case "menu-show-passkeys": {
+          // the browser shows its list on the user's next click in the field (it shows suggestions
+          // for clicks only); our menu stays out of its way there until the user leaves the field
+          const field = menu.anchor;
+          menu.close();
+          const done = () => {
+            if (browserList === field) browserList = undefined;
+          };
+          if (field && showPasskeyListOnce(field, done)) browserList = field;
+          return false;
+        }
         case "menu-new-password-context": {
           const field = menu.anchor;
           if (!field || !mayTakeNewPassword(field)) {

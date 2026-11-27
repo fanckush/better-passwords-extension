@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Test passkey login</title>
+    <style>
+      body { font: 16px system-ui; padding: 40px; }
+      input { display: block; margin: 8px 0 16px; padding: 6px; width: 260px; }
+    </style>
+  </head>
+  <body>
+    <!-- the username field asks for passkey autofill, like GitHub's: "username webauthn" -->
+    <form id="login">
+      <label>Username <input id="user" autocomplete="username webauthn" /></label>
+      <label>Password <input id="pass" type="password" autocomplete="current-password" /></label>
+      <button type="submit">Sign in</button>
+    </form>
+    <button id="outside" type="button">Somewhere else</button>
+  </body>
+</html>
