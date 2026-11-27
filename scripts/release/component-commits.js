@@ -25,6 +25,8 @@ export function only(pluginConfig, context) {
   if (component !== "companion" && component !== "extension") {
     throw new Error(`component-commits: unknown component ${JSON.stringify(component)}`);
   }
+  // Steps that run before commits are loaded (verifyConditions, an early fail) have none to narrow.
+  if (!context.commits) return [rest, context];
   const commits = context.commits.filter((commit) => componentOf(commit.message) === component);
   return [rest, { ...context, commits }];
 }

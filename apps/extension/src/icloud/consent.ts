@@ -2,6 +2,9 @@
 // Site information is already declared for the core native password lookup in Firefox.
 export const HME_DATA_PERMISSIONS = ["personallyIdentifyingInfo", "websiteContent"];
 
+/** The port the popup holds open while it asks for these permissions (Firefox only). */
+export const HME_CONSENT_PORT = "hide-my-email-consent";
+
 interface DataPermissions {
   contains(permissions: { data_collection: string[] }): Promise<boolean>;
   request(permissions: { data_collection: string[] }): Promise<boolean>;

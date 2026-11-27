@@ -104,6 +104,40 @@ func makeBrowserFolder(_ path: String, in support: URL) throws {
         #expect(HostManifests.sharing(orion, in: support).map(\.name) == ["Google Chrome", "Orion"])
     }
 
+    @Test func braveUsesChromesFolder() throws {
+        let support = try temporarySupport(with: ["BraveSoftware/Brave-Origin"])
+        defer { try? FileManager.default.removeItem(at: support) }
+
+        #expect(try HostManifests.install(hostPath: "/h", support: support).map(\.name) == ["Brave Origin"])
+        let chrome = support.appendingPathComponent("Google/Chrome/NativeMessagingHosts")
+        #expect(
+            FileManager.default.fileExists(
+                atPath: chrome.appendingPathComponent("io.github.fanckush.betterpasswords.companion.json").path))
+        #expect(HostManifests.connected(hostPath: "/h", support: support).map(\.name) == ["Brave Origin"])
+    }
+
+    @Test func braveUsesItsOwnFolderWhenChromesCantBeCreated() throws {
+        // Brave reads its own folder when it can't create Chrome's, as when the Google folder is locked
+        let support = try temporarySupport(with: ["BraveSoftware/Brave-Origin"])
+        let google = support.appendingPathComponent("Google")
+        try FileManager.default.createDirectory(at: google, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: google.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: google.path)
+            try? FileManager.default.removeItem(at: support)
+        }
+
+        #expect(try HostManifests.install(hostPath: "/h", support: support).map(\.name) == ["Brave Origin"])
+        let own = support.appendingPathComponent("BraveSoftware/Brave-Origin/NativeMessagingHosts")
+        #expect(
+            FileManager.default.fileExists(
+                atPath: own.appendingPathComponent("io.github.fanckush.betterpasswords.companion.json").path))
+        #expect(HostManifests.connected(hostPath: "/h", support: support).map(\.name) == ["Brave Origin"])
+
+        HostManifests.uninstall(support: support)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: own.path).isEmpty)
+    }
+
     @Test func firefoxManifestsUseExtensionIDs() throws {
         let firefox = HostManifests.browsers.first { $0.kind == .firefox }!
         for manifest in HostManifests.manifests(for: firefox, hostPath: "/h") {

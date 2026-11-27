@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeCommits, componentOf, generateNotes } from "./component-commits.js";
+import { analyzeCommits, componentOf, generateNotes, only } from "./component-commits.js";
 
 const logger = { log: () => {}, error: () => {} };
 const commit = (message: string, hash = message.length.toString(16).padStart(7, "0")) => ({
@@ -56,5 +56,12 @@ describe("generateNotes", () => {
     const companion = await generateNotes(config("companion"), context(messages));
     expect(companion).toContain("add Touch ID");
     expect(companion).not.toContain("inline menu");
+  });
+});
+
+describe("only", () => {
+  it("passes the context through when commits aren't loaded yet (verifyConditions)", () => {
+    const ctx = { logger };
+    expect(only(config("companion"), ctx)).toEqual([{ preset: "conventionalcommits" }, ctx]);
   });
 });

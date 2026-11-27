@@ -141,6 +141,10 @@ code {
   gap: 8px;
 }
 
+.actions.end {
+  justify-content: flex-end;
+}
+
 button.primary,
 button.secondary,
 button.link {
@@ -245,8 +249,24 @@ h2 {
 }
 
 /* a setting's name, with a short description under it */
+label.toggle:has(.detail) {
+  align-items: flex-start;
+}
+
+/* the box sits on the name's line, not between the two lines */
+label.toggle:has(.detail) input {
+  margin-top: 1px;
+  margin-bottom: 0;
+}
+
+/* tight inside a setting, looser between settings, so each reads as one item */
 label.toggle .text {
   display: grid;
+  line-height: 1.25;
+}
+
+label.toggle + label.toggle {
+  margin-top: 4px;
 }
 
 label.toggle .detail {
@@ -412,4 +432,28 @@ button.with-icon svg {
 
 .codes button.secondary {
   flex: none;
+}
+
+/* copying again pulses the button, so the click visibly does something */
+.codes button.secondary.copied {
+  animation: copied 450ms ease-out;
+}
+
+@keyframes copied {
+  from {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-text);
+    transform: scale(0.94);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes copied {
+    from {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-text);
+    }
+  }
 }

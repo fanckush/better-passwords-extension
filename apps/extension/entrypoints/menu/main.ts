@@ -1,6 +1,5 @@
 import "./style.css";
 import { DISPLAY_NAME } from "@/src/config.ts";
-import { requestHideMyEmailConsent } from "@/src/icloud/consent.ts";
 import type { EmailSuggestions, MenuMessage, OneTimeCodeView } from "@/src/messages.ts";
 import { bindToMenu, send } from "@/src/messages.ts";
 import type { Suggestion } from "@/src/passwords/generate.ts";
@@ -330,6 +329,8 @@ browser.runtime.onMessage.addListener((request: MenuMessage, sender) => {
     if (request.unlocked) void unlocked();
     else if (view === "unlocked") void (mode === "email" ? showEmail() : showLocked());
   }
+  // Hide My Email was turned on in the popup, or the user said no there: show what's offered now
+  if (request.type === "hide-my-email-changed" && mode === "email") void showEmail();
   // a new code arrived (by SMS, say): list them again, unless one is being filled
   if (request.type === "one-time-codes-changed" && kind === "one-time-code" && view === "unlocked") {
     if (!fillingCode) void showCodes();
@@ -657,15 +658,14 @@ function hintRow(): HTMLButtonElement {
 async function enableHideMyEmail() {
   render(message("Turning on Hide My Email…"));
   try {
-    if (!(await requestHideMyEmailConsent())) {
-      renderEmail(lastSuggestions);
+    const result = await whileAsking(send({ type: "enable-hide-my-email", nonce }));
+    // Firefox: the popup asks for its permission, and the background says when it's done
+    if ("asking" in result) {
+      render(message("Continue in the window that opened."));
       return;
     }
     const { logins } = lastSuggestions;
-    renderEmail({
-      ...(await whileAsking(send({ type: "enable-hide-my-email", nonce }))),
-      ...(logins ? { logins } : {}),
-    });
+    renderEmail({ ...result, ...(logins ? { logins } : {}) });
   } catch (e) {
     render(message(messageOf(e), true));
   }

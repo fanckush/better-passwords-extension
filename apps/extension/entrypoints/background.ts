@@ -4,7 +4,7 @@ import type { FieldKind } from "@/src/autofill/fields.ts";
 import { Companion } from "@/src/companion.ts";
 import { BRIDGE_HOST } from "@/src/config.ts";
 import { fillCredentials } from "@/src/fill.ts";
-import { hasHideMyEmailConsent } from "@/src/icloud/consent.ts";
+import { HME_CONSENT_PORT, hasHideMyEmailConsent } from "@/src/icloud/consent.ts";
 import { HEADER_RULE_ID, HideMyEmail, headerRule, ICloudError } from "@/src/icloud/hide-my-email.ts";
 import {
   type AutofillStatus,
@@ -120,8 +120,7 @@ export default defineBackground(() => {
   session.onChange(({ state }) => {
     if ((state === "unlocked") === unlocked) return;
     unlocked = state === "unlocked";
-    const message: MenuMessage = { type: "session-changed", unlocked };
-    void browser.runtime.sendMessage(message).catch(() => {});
+    tellMenus({ type: "session-changed", unlocked });
   });
 
   // A new verification code (one that just arrived by SMS, say): open menus and the popup list again
@@ -132,8 +131,7 @@ export default defineBackground(() => {
     if (!client || announcing.has(client)) return;
     announcing.add(client);
     client.onOneTimeCodeAvailable(() => {
-      const message: MenuMessage = { type: "one-time-codes-changed" };
-      void browser.runtime.sendMessage(message).catch(() => {});
+      tellMenus({ type: "one-time-codes-changed" });
     });
   });
 
@@ -261,7 +259,7 @@ export default defineBackground(() => {
    * menu iframe), every tab-scoped request is bound to that tab, whatever `tabId` they pass.
    */
   type Caller =
-    | { kind: "page"; tabId?: number }
+    | { kind: "page"; tabId?: number; frameId?: number }
     | { kind: "content-script"; tabId: number; frameId: number; url: string };
 
   function tabOf(caller: Caller, requested?: number): number {
@@ -283,7 +281,8 @@ export default defineBackground(() => {
   // Nonces of the menus each tab's content scripts may show, newest last, with the frame showing
   // each. Only our content script learns them; menu.html must present one of its tab's (see the
   // onMessage listener).
-  const menuNonces = new Map<number, { nonce: string; frameId: number }[]>();
+  // `menuFrameId`: the menu's own frame, once it has asked something (Firefox needs it, see tellMenus).
+  const menuNonces = new Map<number, { nonce: string; frameId: number; menuFrameId?: number }[]>();
   const MENU_NONCES_PER_TAB = 8;
 
   function issueMenuNonce(tabId: number, frameId: number): string {
@@ -293,6 +292,20 @@ export default defineBackground(() => {
     const nonces = [...(menuNonces.get(tabId) ?? []), { nonce, frameId }].slice(-MENU_NONCES_PER_TAB);
     menuNonces.set(tabId, nonces);
     return nonce;
+  }
+
+  /**
+   * Tells every open menu, and the popup. Firefox runs the menu like a content script: it hears
+   * only what's sent to its own frame, never a runtime broadcast.
+   */
+  function tellMenus(message: MenuMessage) {
+    void browser.runtime.sendMessage(message).catch(() => {});
+    if (!import.meta.env.FIREFOX) return;
+    for (const [tabId, menus] of menuNonces) {
+      for (const frameId of new Set(menus.map((menu) => menu.menuFrameId))) {
+        if (frameId !== undefined) void browser.tabs.sendMessage(tabId, message, { frameId }).catch(() => {});
+      }
+    }
   }
 
   function isMenuNonce(tabId: number, nonce: unknown): boolean {
@@ -656,6 +669,55 @@ export default defineBackground(() => {
         if (!allowed) return saveSettings({ hideMyEmail: false });
       });
     });
+    // These permissions are only for Hide My Email, so allowing them turns it on: from our popup
+    // (which Firefox may close as its prompt opens, before it hears the answer) or about:addons
+    browser.permissions.onAdded.addListener(() => {
+      void hasHideMyEmailConsent().then(async (allowed) => {
+        if (!allowed) return;
+        await saveSettings({ hideMyEmail: true });
+        if (consentAsk) tellConsentMenu(consentAsk);
+      });
+    });
+    browser.runtime.onConnect.addListener((port) => {
+      if (port.name !== HME_CONSENT_PORT || port.sender?.url !== browser.runtime.getURL("/popup.html")) return;
+      const ask = consentAsk;
+      // closed: allowed, declined or dismissed, the menu shows what it now can
+      port.onDisconnect.addListener(() => {
+        if (!ask) return;
+        if (consentAsk === ask) consentAsk = undefined;
+        tellConsentMenu(ask);
+      });
+    });
+  }
+
+  /**
+   * Firefox: the inline menu that asked to turn Hide My Email on, while the popup asks for the
+   * permissions (a page's frame can't ask itself). Kept a minute for the popup to pick up.
+   */
+  let consentAsk: { tabId: number; frameId: number; at: number } | undefined;
+  const CONSENT_ASK_MS = 60_000;
+
+  function tellConsentMenu({ tabId, frameId }: { tabId: number; frameId: number }) {
+    const message: MenuMessage = { type: "hide-my-email-changed" };
+    // the menu runs like a content script in Firefox, so it hears only messages sent to its tab
+    void browser.tabs.sendMessage(tabId, message, { frameId }).catch(() => {});
+  }
+
+  /** Opens the popup to ask for Hide My Email's permissions, or a small window if it can't open. */
+  async function askHideMyEmailConsent(tabId: number, frameId: number) {
+    consentAsk = { tabId, frameId, at: Date.now() };
+    try {
+      // Firefox's browserAction has openPopup; WXT's (Chrome's) types don't list it
+      await (browser.browserAction as unknown as { openPopup(): Promise<void> }).openPopup();
+    } catch {
+      // another panel is open, or the window lost focus meanwhile
+      await browser.windows.create({
+        type: "popup",
+        url: browser.runtime.getURL("/popup.html"),
+        width: 360,
+        height: 260,
+      });
+    }
   }
 
   /** What email fields offer: the site's saved logins first, then Hide My Email, the user's own emails below. */
@@ -989,9 +1051,23 @@ export default defineBackground(() => {
         return saveSettings(request.settings);
       case "email-suggestions":
         return emailSuggestions(tabOf(caller), request.logins);
-      case "enable-hide-my-email":
+      case "enable-hide-my-email": {
+        const tabId = tabOf(caller);
+        if (!(await hasHideMyEmailConsent())) {
+          if (caller.kind !== "page" || caller.frameId === undefined) throw new Error("no menu to answer");
+          await askHideMyEmailConsent(tabId, caller.frameId);
+          return { asking: true };
+        }
         await saveSettings({ hideMyEmail: true });
-        return emailSuggestions(tabOf(caller));
+        return emailSuggestions(tabId);
+      }
+      case "popup-intent": {
+        const ask = consentAsk;
+        const hideMyEmailConsent = ask !== undefined && Date.now() - ask.at < CONSENT_ASK_MS;
+        // asked once: opened again later, the popup is its usual self
+        if (ask) ask.at = 0;
+        return { hideMyEmailConsent };
+      }
       case "dismiss-hide-my-email-hint":
         await saveSettings({ hideMyEmailHint: false });
         return null;
@@ -1155,7 +1231,31 @@ export default defineBackground(() => {
         } satisfies Envelope<never>);
         return false;
       }
-      caller = sender.tab?.id === undefined ? { kind: "page" } : { kind: "page", tabId: sender.tab.id };
+      if (isMenu && sender.tab?.id !== undefined && sender.frameId !== undefined) {
+        const menu = menuNonces.get(sender.tab.id)?.find((m) => m.nonce === request.menuNonce);
+        if (menu) menu.menuFrameId = sender.frameId;
+      }
+      caller =
+        sender.tab?.id === undefined
+          ? { kind: "page" }
+          : {
+              kind: "page",
+              tabId: sender.tab.id,
+              ...(sender.frameId === undefined ? {} : { frameId: sender.frameId }),
+            };
+    } else if (
+      import.meta.env.FIREFOX &&
+      CONTENT_TO_MENU.has((request as { type: string }).type) &&
+      sender.tab?.id !== undefined
+    ) {
+      // Firefox: what our content script tells its menu (see tellMenu) comes here instead, and
+      // goes on to the menu whose nonce that same frame was issued
+      const { nonce } = request as unknown as MenuMessage & { nonce: string };
+      const menu = menuNonces.get(sender.tab.id)?.find((m) => m.nonce === nonce && m.frameId === sender.frameId);
+      if (menu?.menuFrameId !== undefined) {
+        void browser.tabs.sendMessage(sender.tab.id, request, { frameId: menu.menuFrameId }).catch(() => {});
+      }
+      return false;
     } else if (
       sender.tab?.id !== undefined &&
       sender.frameId !== undefined &&
@@ -1189,6 +1289,9 @@ export default defineBackground(() => {
     return true;
   });
 });
+
+/** What the content script sends its menu straight (see MenuMessage); Firefox relays it (see tellMenus). */
+const CONTENT_TO_MENU: ReadonlySet<string> = new Set(["menu-filter", "menu-typing", "menu-placement"]);
 
 async function tabUrl(tabId: number): Promise<URL | undefined> {
   const tab = await browser.tabs.get(tabId);
