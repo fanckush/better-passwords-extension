@@ -1,0 +1,17 @@
+{
+  "name": "@app/fake-bitwarden",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Test double of Bitwarden's servers: sign-in (two-step, new device), sync and saving, with real encryption",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@app/bitwarden": "workspace:*",
+    "@app/otp": "workspace:*"
+  }
+}

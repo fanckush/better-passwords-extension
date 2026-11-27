@@ -50,3 +50,15 @@ export const COMPANION_DOWNLOAD_URL = `${SITE_URL}/download/mac`;
  * app's Info.plist. Without the app, browsers ignore it (see openCompanionLink in src/ui/setup.ts).
  */
 export const COMPANION_CONNECT_URL = "betterpasswords://connect";
+
+/**
+ * The Bitwarden client version we send. Bitwarden's servers turn some features on by client version,
+ * so this follows their browser extension's (from a release we tested against), not ours.
+ */
+export const BITWARDEN_CLIENT_VERSION = "2025.11.0";
+
+/** Where people ask for another password manager (.github/ISSUE_TEMPLATE/password-manager.yml). */
+export const OTHER_PROVIDER_ISSUE_URL = `${REPO_URL}/issues/new?template=password-manager.yml`;
+
+/** Where people ask for self-hosted Bitwarden (and Vaultwarden) support. */
+export const SELF_HOSTED_ISSUE_URL = `${REPO_URL}/issues/new?title=${encodeURIComponent("Support self-hosted Bitwarden")}`;

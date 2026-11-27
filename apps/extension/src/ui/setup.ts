@@ -12,10 +12,11 @@ import {
   SETUP_COMMAND,
   WINDOWS_SETUP_COMMAND,
 } from "../config.ts";
-import { mainAccount, type Status, send } from "../messages.ts";
+import { appleAccount, type Status, send } from "../messages.ts";
 import { computerName, type Platform, platform } from "../platform.ts";
 import { h } from "./h.ts";
 import { CHECK, icon } from "./icons.ts";
+import { providerTile } from "./providers.ts";
 import { browserName, reportProblem } from "./report.ts";
 
 /** How the user chose to connect. Remembered because the popup closes while they do it. */
@@ -34,23 +35,23 @@ export interface SetupAction {
 export interface SetupOptions {
   /** Once connected: what moves the user on to unlocking. */
   next: SetupAction;
-  /** Once unlocked, where the flow can still be on screen (the setup page). */
-  finish?: SetupAction;
+  /** Once unlocked, where the flow can still be on screen (the setup page): what shows instead. */
+  done?: () => void;
 }
 
 /**
  * Renders the step the user is at: the welcome while this browser can't reach the helper, then
- * "connected", then (on the setup page) "all set". It moves on by itself as setup completes. When
+ * "connected", then (on the setup page) whatever `done` shows. It moves on by itself as setup completes. When
  * the helper can't be reached although setup is done, it says why instead of "connected".
  */
 export async function setupFlow(full: Status | undefined, options: SetupOptions): Promise<HTMLElement> {
-  const status = mainAccount(full);
+  const status = appleAccount(full);
   const root = h("div", { class: "setup" });
   os = await platform();
   if (os === "other") {
     root.append(
-      h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
-      h("h1", { textContent: "Better Passwords needs a Mac or a PC" }),
+      providerTile("apple", "large"),
+      h("h1", { textContent: "Better Passwords Needs a Mac or a PC" }),
       h("p", {
         class: "lead",
         textContent:
@@ -148,13 +149,13 @@ function showWelcome(root: HTMLElement, status: AccountStatus, options: SetupOpt
   const repair = /forbidden/i.test(status.error ?? "");
   show(
     root,
-    h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
-    h("h1", { textContent: repair ? "Let's reconnect" : "Welcome to Better Passwords" }),
+    providerTile("apple", "large"),
+    h("h1", { textContent: repair ? "Reconnect Apple Passwords" : "Set Up Apple Passwords" }),
     h("p", {
       class: "lead",
       textContent: repair
         ? "This browser's link to Apple Passwords needs repairing. Connect it once more."
-        : `First, connect this browser to Apple Passwords on your ${computerName(os)}.`,
+        : `Connect this browser to Apple Passwords on your ${computerName(os)}.`,
     }),
     route,
     waiting,
@@ -166,7 +167,7 @@ function showWelcome(root: HTMLElement, status: AccountStatus, options: SetupOpt
   poll(root, async () => {
     const answer = await send({ type: "get-status" }).catch(() => undefined);
     if (!answer) return false;
-    const latest = mainAccount(answer);
+    const latest = appleAccount(answer);
     if (!connected(latest) && latest.state !== "unavailable") return false;
     await showStep(root, latest, options);
     return true;
@@ -185,8 +186,8 @@ async function showBlocked(root: HTMLElement, status: AccountStatus, options: Se
   const who = name && !/^(google chrome|chromium)$/i.test(name) ? name : "this browser";
   show(
     root,
-    h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
-    h("h1", { textContent: `${capitalized(who)} can't use Apple Passwords yet` }),
+    providerTile("apple", "large"),
+    h("h1", { textContent: `${capitalized(who)} Can't Use Apple Passwords Yet` }),
     h("p", {
       class: "lead",
       textContent: `macOS only lets Apple's password helper run in browsers Apple has approved, and ${who} isn't one yet.`,
@@ -209,8 +210,8 @@ async function showBlocked(root: HTMLElement, status: AccountStatus, options: Se
 function showHelperMissing(root: HTMLElement, status: AccountStatus, options: SetupOptions) {
   show(
     root,
-    h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
-    h("h1", { textContent: "Apple's password helper didn't start" }),
+    providerTile("apple", "large"),
+    h("h1", { textContent: "Apple's Password Helper Didn't Start" }),
     h("p", {
       class: "lead",
       textContent: "It comes with iCloud for Windows. Check that it's installed and signed in.",
@@ -226,8 +227,8 @@ function showHelperMissing(root: HTMLElement, status: AccountStatus, options: Se
 function showUnreachable(root: HTMLElement, status: AccountStatus, options: SetupOptions) {
   show(
     root,
-    h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
-    h("h1", { textContent: "Couldn't reach Apple Passwords" }),
+    providerTile("apple", "large"),
+    h("h1", { textContent: "Couldn't Reach Apple Passwords" }),
     h("p", { class: "lead", textContent: `Apple's password helper on your ${computerName(os)} didn't answer.` }),
     retryRoute(root, status, options, "Still no answer. Restarting the browser usually helps."),
     details(status.error),
@@ -247,7 +248,7 @@ function retryRoute(root: HTMLElement, status: AccountStatus, options: SetupOpti
     button.disabled = true;
     button.textContent = "Trying…";
     const answer = await send({ type: "retry-connection" }).catch(() => undefined);
-    const latest = answer && mainAccount(answer);
+    const latest = answer && appleAccount(answer);
     if (latest && stepOf(latest) !== stepOf(status)) return showStep(root, latest, options);
     button.disabled = false;
     button.textContent = "Try Again";
@@ -384,7 +385,7 @@ function showConnected(root: HTMLElement, options: SetupOptions) {
   show(
     root,
     h("div", { class: "badge" }, icon(CHECK)),
-    h("h1", { textContent: "You're connected" }),
+    h("h1", { textContent: "You're Connected" }),
     h("p", { class: "lead", textContent: `Next, unlock with the code your ${computerName(os)} shows.` }),
     h(
       "div",
@@ -394,10 +395,10 @@ function showConnected(root: HTMLElement, options: SetupOptions) {
     ),
   );
 
-  if (!options.finish) return;
+  if (!options.done) return;
   poll(root, async () => {
     const latest = await send({ type: "get-status" }).catch(() => undefined);
-    if (!latest || mainAccount(latest).state !== "unlocked") return false;
+    if (!latest || appleAccount(latest).state !== "unlocked") return false;
     showDone(root, options);
     return true;
   });
@@ -405,26 +406,25 @@ function showConnected(root: HTMLElement, options: SetupOptions) {
 
 function showDone(root: HTMLElement, options: SetupOptions) {
   forgetRoute();
-  let finish: HTMLButtonElement | null = null;
-  if (options.finish) {
-    const action = options.finish;
-    finish = h("button", { class: "button primary", type: "button", textContent: action.label });
-    finish.addEventListener("click", () => action.run(finish as HTMLButtonElement));
-  }
+  if (options.done) return options.done();
   show(
     root,
     h("div", { class: "badge" }, icon(CHECK)),
-    h("h1", { textContent: "You're all set" }),
+    h("h1", { textContent: "You're All Set" }),
     h("p", {
       class: "lead",
       textContent: "Click a login field on any website to fill a password from Apple Passwords.",
     }),
-    finish,
   );
 }
 
 function show(root: HTMLElement, ...children: (Node | false | null)[]) {
   root.replaceChildren(...children.filter((child): child is Node => Boolean(child)));
+}
+
+/** Whether the user started connecting Apple Passwords (the popup closes while they do it). */
+export function appleSetupStarted(): boolean {
+  return savedRoute() !== undefined;
 }
 
 function savedRoute(): Route | undefined {

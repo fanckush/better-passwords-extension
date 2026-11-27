@@ -18,6 +18,7 @@
   --accent-text: #ffffff;
   --danger: light-dark(#d70015, #ff453a);
   --warning: light-dark(#c27c00, #ffb340);
+  --success: light-dark(#248a3d, #30d158);
 }
 
 :root[data-scheme="light"] {

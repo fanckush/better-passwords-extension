@@ -1,7 +1,7 @@
 // The accounts the extension fills from. Reads go to every unlocked account and are merged; each
 // item carries a reference to the account it came from, so filling or reading it goes back there;
-// saving a new login goes to one account, chosen in one place (saveTarget). Today there is one
-// account, Apple Passwords; nothing here assumes so.
+// saving goes to one account, chosen in one place (saveTarget). Accounts are kept in storage and
+// can be added and removed; nothing here knows which providers they are.
 
 import type {
   Account,
@@ -48,6 +48,15 @@ export interface Entry {
   defaults: () => Promise<AccountSettings>;
 }
 
+export interface AccountsOptions {
+  /** Makes the account a stored one names (undefined for a provider this version doesn't know). */
+  create?: (stored: StoredAccount) => Entry | undefined;
+  /** The accounts a new install starts with. */
+  initial?: Omit<StoredAccount, "settings">[];
+  /** The account new logins are saved to (the user's choice), if set. */
+  saveTo?: () => Promise<string | undefined>;
+}
+
 export class AccountError extends Error {
   constructor(
     message: string,
@@ -55,6 +64,11 @@ export class AccountError extends Error {
   ) {
     super(message);
   }
+}
+
+/** A site's address when only its hostname is known (around saves): its home page. */
+export function siteUrl(hostname: string): URL {
+  return new URL(`https://${hostname}/`);
 }
 
 export function itemRef(account: string, id: string): string {
@@ -73,14 +87,22 @@ export function parseRef(ref: string): { account: string; id: string } {
 }
 
 export class Accounts {
-  readonly #entries: Entry[];
+  #entries: Entry[] = [];
   #stored: Promise<StoredAccount[]> | undefined;
+  readonly #listeners = new Set<(account: Account, status: AccountStatus) => void>();
+  readonly #codeListeners = new Set<() => void>();
+  readonly #loginListeners = new Set<() => void>();
+  readonly #unwatch = new Map<string, () => void>();
+  /** Settles once the stored accounts are made: until then, the list may be incomplete. */
+  readonly ready: Promise<void>;
 
   constructor(
     entries: Entry[],
     private readonly store: AccountsStore,
+    private readonly options: AccountsOptions = {},
   ) {
-    this.#entries = entries;
+    for (const entry of entries) this.#attach(entry);
+    this.ready = this.#restore().catch(() => {});
   }
 
   get all(): readonly Account[] {
@@ -115,23 +137,58 @@ export class Accounts {
     return account as Account & { unlock: PairingCodeUnlock };
   }
 
-  /** Called with each account's status as it changes. */
+  /** Called with each account's status as it changes, accounts added later included. */
   onChange(listener: (account: Account, status: AccountStatus) => void): () => void {
-    const stops = this.all.map((account) => account.onChange((status) => listener(account, status)));
-    return () => {
-      for (const stop of stops) stop();
-    };
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
   }
 
   onOneTimeCodesChanged(listener: () => void): () => void {
-    const stops = this.all.map((account) => account.onOneTimeCodesChanged(listener));
-    return () => {
-      for (const stop of stops) stop();
-    };
+    this.#codeListeners.add(listener);
+    return () => this.#codeListeners.delete(listener);
+  }
+
+  /** Called when an account's logins changed by themselves (synced from elsewhere). */
+  onLoginsChanged(listener: () => void): () => void {
+    this.#loginListeners.add(listener);
+    return () => this.#loginListeners.delete(listener);
+  }
+
+  /** Adds an account (just signed in, say) and keeps it for next time. */
+  async add(entry: Entry): Promise<void> {
+    await this.ready;
+    if (this.#entries.some((e) => e.account.id === entry.account.id)) {
+      throw new AccountError("that account is added already", "unknown-account");
+    }
+    const stored = await this.#load();
+    this.#attach(entry);
+    const { account } = entry;
+    const next = [
+      ...stored.filter((s) => s.id !== account.id),
+      { id: account.id, provider: account.provider, settings: {} },
+    ];
+    this.#stored = Promise.resolve(next);
+    await this.store.save(next);
+    for (const listener of this.#listeners) listener(entry.account, entry.account.status);
+  }
+
+  /** Locks and forgets an account: it signs out, if it signs in. */
+  async remove(id: string): Promise<void> {
+    await this.ready;
+    const entry = this.#entry(id);
+    entry.account.lock();
+    this.#unwatch.get(id)?.();
+    this.#unwatch.delete(id);
+    this.#entries = this.#entries.filter((e) => e !== entry);
+    const next = (await this.#load()).filter((s) => s.id !== id);
+    this.#stored = Promise.resolve(next);
+    await this.store.save(next);
+    await entry.account.remove?.();
   }
 
   /** Connects the accounts in `states` (by default those that lost their connection). */
   async connect(states: readonly AccountStatus["state"][] = ["offline"]): Promise<void> {
+    await this.ready;
     await Promise.all(
       this.all.filter(({ status }) => states.includes(status.state)).map((a) => a.connect().catch(() => {})),
     );
@@ -141,30 +198,30 @@ export class Accounts {
     for (const account of id === undefined ? this.all : [this.get(id)]) account.lock();
   }
 
-  async logins(hostname: string, tab?: Tab): Promise<LoginRef[]> {
-    const lists = await this.#fromUnlocked((account) => account.logins(hostname, tab));
+  async logins(page: URL, tab?: Tab): Promise<LoginRef[]> {
+    const lists = await this.#fromUnlocked((account) => account.logins(page, tab));
     return lists.flatMap(([account, logins]) =>
       logins.map(({ id, username }) => ({ ref: itemRef(account.id, id), account: account.id, username })),
     );
   }
 
-  /** The usernames saved for a site, in one account or (by default) all unlocked ones. */
-  async usernames(hostname: string, account?: Account): Promise<string[]> {
-    if (account) return (await account.logins(hostname)).map((login) => login.username);
-    return (await this.logins(hostname)).map((login) => login.username);
+  /** The usernames saved for a page, in one account or (by default) all unlocked ones. */
+  async usernames(page: URL, account?: Account): Promise<string[]> {
+    if (account) return (await account.logins(page)).map((login) => login.username);
+    return (await this.logins(page)).map((login) => login.username);
   }
 
   /** The login `ref` names (without its password), if it's still saved. */
-  async login(hostname: string, ref: string): Promise<LoginRef> {
+  async login(page: URL, ref: string): Promise<LoginRef> {
     const { account, id } = parseRef(ref);
-    const login = await this.#unlockedAccount(account).login(hostname, id);
+    const login = await this.#unlockedAccount(account).login(page, id);
     if (!login) throw new AccountError("that login is no longer saved", "not-found");
     return { ref, account, username: login.username };
   }
 
-  async credential(hostname: string, ref: string, tab: Tab): Promise<Credential> {
+  async credential(page: URL, ref: string, tab: Tab): Promise<Credential> {
     const { account, id } = parseRef(ref);
-    const credential = await this.#unlockedAccount(account).credential(hostname, id, tab);
+    const credential = await this.#unlockedAccount(account).credential(page, id, tab);
     if (!credential) throw new AccountError("that login is no longer saved", "not-found");
     return credential;
   }
@@ -190,18 +247,38 @@ export class Accounts {
   }
 
   /**
-   * The account a new login for `hostname` is saved to. With one account, that one; with more,
-   * this is where a default, per-site choices or asking the user come in.
+   * The account a login for `page` is saved to: a new password goes to the account that has the
+   * login (by `username`); a new login to the account the user chose, else the first that saves.
+   * The chosen account locked is an error, not a reason to save somewhere the user didn't pick.
    */
-  saveTarget(_hostname: string): Account {
-    const target = this.unlocked.find((account) => account.capabilities.savePasswords);
+  async saveTarget(page: URL, username?: string): Promise<Account> {
+    await this.ready;
+    const savers = this.all.filter((account) => account.capabilities.savePasswords);
+    const unlocked = savers.filter((account) => account.isUnlocked);
+    if (username) {
+      const lower = username.toLowerCase();
+      for (const account of unlocked) {
+        const logins = await account.logins(page).catch(() => []);
+        if (logins.some((login) => login.username.toLowerCase() === lower)) return account;
+      }
+    }
+    const chosen = await this.#chosenSaver(savers);
+    if (chosen && !chosen.isUnlocked) throw new AccountError(`Unlock ${chosen.label} to save passwords`, "locked");
+    const target = chosen ?? unlocked[0];
     if (!target) throw new AccountError("unlock to save passwords", "locked");
     return target;
   }
 
-  /** The account whose app opens: the first that has one. */
+  async #chosenSaver(savers: Account[]): Promise<Account | undefined> {
+    const id = await this.options.saveTo?.();
+    return id === undefined ? undefined : savers.find((account) => account.id === id);
+  }
+
+  /** The account whose app opens: the first that has one and can be used here. */
   appAccount(): Account | undefined {
-    return this.all.find((account) => account.capabilities.openApp);
+    return this.all.find(
+      (account) => account.capabilities.openApp && !["needs-setup", "unavailable"].includes(account.status.state),
+    );
   }
 
   async settings(id: string): Promise<AccountSettings> {
@@ -221,6 +298,7 @@ export class Accounts {
 
   /** The accounts as pages see them. */
   async views(): Promise<AccountView[]> {
+    await this.ready;
     return Promise.all(this.all.map((account) => this.#view(account)));
   }
 
@@ -239,6 +317,7 @@ export class Accounts {
       id: account.id,
       provider: account.provider,
       label: account.label,
+      ...(account.detail ? { detail: account.detail } : {}),
       ...account.status,
       unlock,
       capabilities: account.capabilities,
@@ -252,9 +331,41 @@ export class Accounts {
     return entry;
   }
 
+  #attach(entry: Entry) {
+    const { account } = entry;
+    this.#entries.push(entry);
+    const stops = [
+      account.onChange((status) => {
+        for (const listener of this.#listeners) listener(account, status);
+      }),
+      account.onOneTimeCodesChanged(() => {
+        for (const listener of this.#codeListeners) listener();
+      }),
+      account.onLoginsChanged?.(() => {
+        for (const listener of this.#loginListeners) listener();
+      }) ?? (() => {}),
+    ];
+    this.#unwatch.set(account.id, () => {
+      for (const stop of stops) stop();
+    });
+  }
+
+  /** Makes the stored accounts (or, on a new install, the initial ones). */
+  async #restore(): Promise<void> {
+    const { create, initial = [] } = this.options;
+    if (!create) return;
+    const stored = (await this.store.load()) ?? initial.map((account) => ({ ...account, settings: {} }));
+    for (const account of stored) {
+      if (this.#entries.some((e) => e.account.id === account.id)) continue;
+      const entry = create(account);
+      if (entry) this.#attach(entry);
+    }
+  }
+
   /** What's stored, with an entry for every account (added, and saved, on first use). */
   #load(): Promise<StoredAccount[]> {
     this.#stored ??= (async () => {
+      await this.ready;
       const stored = (await this.store.load()) ?? [];
       const missing = this.all.filter((account) => !stored.some((s) => s.id === account.id));
       if (missing.length === 0) return stored;

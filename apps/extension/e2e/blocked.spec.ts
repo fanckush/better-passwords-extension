@@ -13,8 +13,8 @@ test("says the browser is blocked instead of connected", async ({ context, popup
   await expect(popup.getByRole("heading", { name: "Welcome to Better Passwords" })).toBeVisible();
 
   runBlockedSetup();
-  await expect(popup.getByRole("heading", { name: /can't use Apple Passwords yet/ })).toBeVisible();
-  await expect(popup.getByRole("heading", { name: "You're connected" })).toHaveCount(0);
+  await expect(popup.getByRole("heading", { name: /Can't Use Apple Passwords Yet/ })).toBeVisible();
+  await expect(popup.getByRole("heading", { name: "You're Connected" })).toHaveCount(0);
   // the raw error is there for a bug report, but folded away
   const details = popup.locator("details", { hasText: "Native host has exited." });
   await expect(details).toHaveJSProperty("open", false);
@@ -30,13 +30,13 @@ test("launches the helper once, and again only when asked", async ({
   runBlockedSetup();
   const popup = await context.newPage();
   await popup.goto(popupUrl);
-  await expect(popup.getByRole("heading", { name: /can't use Apple Passwords yet/ })).toBeVisible();
+  await expect(popup.getByRole("heading", { name: /Can't Use Apple Passwords Yet/ })).toBeVisible();
   const launched = blockedLaunches();
   expect(launched).toBe(2);
 
   // reopening the popup and clicking login fields launch nothing more
   await popup.reload();
-  await expect(popup.getByRole("heading", { name: /can't use Apple Passwords yet/ })).toBeVisible();
+  await expect(popup.getByRole("heading", { name: /Can't Use Apple Passwords Yet/ })).toBeVisible();
   const page = await context.newPage();
   await page.goto(`${siteUrl}/login.html`);
   await page.locator("#pass").click();

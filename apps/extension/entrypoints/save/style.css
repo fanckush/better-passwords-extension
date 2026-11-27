@@ -1,0 +1,99 @@
+@import "../../src/ui/tokens.css";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: transparent;
+  font: 13px / 1.35 var(--font);
+  color: var(--text);
+  overflow: hidden;
+}
+
+html {
+  height: 100%;
+  border: 1px solid var(--separator);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.head {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.head svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+}
+
+.title {
+  font-weight: 600;
+}
+
+.detail {
+  color: var(--text-secondary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.actions .never {
+  margin-right: auto;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.primary {
+  padding: 4px 12px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.secondary {
+  padding: 3px 10px;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

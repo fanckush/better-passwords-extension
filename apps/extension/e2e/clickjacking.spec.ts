@@ -12,7 +12,7 @@ async function unlockedMenu(page: Page, siteUrl: string): Promise<Frame> {
   await page.locator("#pass").click();
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("e2e-user")).toBeVisible();
   return menu;
 }

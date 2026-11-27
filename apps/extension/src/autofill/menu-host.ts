@@ -23,7 +23,7 @@ const MAX_HEIGHT = 320;
 /** How long the menu must have been visible, without a break, before it may fill anything. */
 const STEADY_MS = 300;
 
-const HOST_STYLE: Record<string, string> = {
+export const HOST_STYLE: Record<string, string> = {
   all: "initial",
   position: "fixed",
   inset: "auto",
@@ -41,7 +41,7 @@ const HOST_STYLE: Record<string, string> = {
   "box-shadow": "0 8px 28px light-dark(rgb(0 0 0 / 0.18), rgb(0 0 0 / 0.5)), 0 1px 4px rgb(0 0 0 / 0.12)",
 };
 
-function createFrame(src: string, scheme: Scheme): HTMLIFrameElement {
+export function createFrame(src: string, scheme: Scheme): HTMLIFrameElement {
   const frame = document.createElement("iframe");
   frame.setAttribute("title", "Better Passwords");
   frame.setAttribute("allow", "");

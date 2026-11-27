@@ -1,5 +1,5 @@
 import type { Frame, Page } from "@playwright/test";
-import { totp } from "../../../packages/fake-helper/src/totp.ts";
+import { totp } from "../../../packages/otp/src/totp.ts";
 import { choose, expect, menuFrame, PAIRING_CODE, test } from "./fixtures.ts";
 
 const ALICE = "JBSWY3DPEHPK3PXP";
@@ -27,7 +27,7 @@ async function signIn(page: Page, url: string, username: string) {
   await page.locator("#user").click();
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await choose(menu, username);
   await expect(page.locator("#pass")).toHaveValue(`${username}-pass`);
   await page.locator("#sign-in-button").click();

@@ -57,7 +57,7 @@ test.describe("with the companion app", () => {
     const again = await context.newPage();
     await again.goto(popupUrl);
     await expect(again.getByText("Enter the code shown on your Mac")).toBeVisible();
-    await expect(again.getByRole("button", { name: "Enter it for me" })).toHaveCount(0);
+    await expect(again.getByRole("button", { name: "Enter It for Me" })).toHaveCount(0);
   });
 });
 
@@ -68,8 +68,8 @@ test.describe("when Touch ID is cancelled", () => {
     const popup = await context.newPage();
     await popup.goto(popupUrl);
     await expect(popup.getByText("Touch ID was cancelled.")).toBeVisible();
-    await expect(popup.getByRole("button", { name: "Enter it for me" })).toBeVisible();
-    await popup.getByLabel("Verification code").fill(PAIRING_CODE);
+    await expect(popup.getByRole("button", { name: "Enter It for Me" })).toBeVisible();
+    await popup.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
     await expect(popup.getByText("Open a website to see its saved passwords.")).toBeVisible();
   });
 });
@@ -82,7 +82,7 @@ test.describe("when the companion still needs setup", () => {
     await popup.goto(popupUrl);
     await expect(popup.getByText("Enter the code shown on your Mac")).toBeVisible();
     await expect(popup.getByText("finish setting up the companion app")).toBeVisible();
-    await popup.getByLabel("Verification code").fill(PAIRING_CODE);
+    await popup.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
     await expect(popup.getByRole("button", { name: "Finish Setting Up" })).toBeVisible();
   });
 });

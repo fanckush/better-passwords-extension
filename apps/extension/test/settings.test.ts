@@ -4,11 +4,11 @@ import { DEFAULT_SETTINGS, LEGACY_ACCOUNT_SETTINGS } from "../src/messages.ts";
 
 describe("appleDefaultSettings", () => {
   it("locks with the PC on Windows, where Apple's helper never asks before filling", () => {
-    expect(appleDefaultSettings("windows")).toEqual({ lockOnScreenLock: true, touchId: true });
+    expect(appleDefaultSettings("windows")).toEqual({ lockOnScreenLock: true, touchId: true, lockAfterMinutes: 0 });
   });
 
   it("leaves the Mac defaults as they are", () => {
-    expect(appleDefaultSettings("mac")).toEqual({ lockOnScreenLock: false, touchId: true });
+    expect(appleDefaultSettings("mac")).toEqual({ lockOnScreenLock: false, touchId: true, lockAfterMinutes: 0 });
   });
 });
 

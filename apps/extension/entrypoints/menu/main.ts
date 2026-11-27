@@ -1,7 +1,8 @@
 import "./style.css";
+import type { AccountView } from "@/src/accounts/types.ts";
 import { DISPLAY_NAME } from "@/src/config.ts";
-import type { EmailSuggestions, MenuMessage, OneTimeCodeView, Status } from "@/src/messages.ts";
-import { bindToMenu, mainAccount, send } from "@/src/messages.ts";
+import type { EmailSuggestions, MenuMessage, OneTimeCodeView } from "@/src/messages.ts";
+import { bindToMenu, send } from "@/src/messages.ts";
 import type { Suggestion } from "@/src/passwords/generate.ts";
 import { computerName, platform } from "@/src/platform.ts";
 import { applySystemAccent } from "@/src/ui/accent.ts";
@@ -23,6 +24,7 @@ import {
   TIMER,
   WARNING,
 } from "@/src/ui/icons.ts";
+import { providerBadge } from "@/src/ui/providers.ts";
 
 // The inline menu, shown in an iframe under a login field. It is an extension page, so the web
 // page can't read the usernames shown here or listen to keys typed into the code field.
@@ -131,8 +133,12 @@ function hide() {
  */
 let redraw: (() => void) | undefined;
 
+/** The menu lists the page's logins (or says there are none): what a sync elsewhere may change. */
+let listingLogins = false;
+
 function render(...children: (Node | null)[]) {
   redraw = undefined;
+  listingLogins = false;
   quiet = false;
   heldEmpty = undefined;
   panel.replaceChildren(...children.filter((c): c is Node => c !== null));
@@ -147,11 +153,16 @@ function row(
   detail: string,
   onChoose: () => void,
   detailClass = "detail",
+  /** The account it's from, when the list mixes several: a badge on the icon. */
+  from?: AccountView,
 ): HTMLButtonElement {
   const button = h(
     "button",
     { class: "row", attrs: { role: "option" } },
-    icon(svgPath),
+    // logins from more than one account: the popup's look, an initial with the account's badge
+    from
+      ? h("span", { class: "avatar" }, (title[0] ?? "?").toUpperCase(), providerBadge(from.provider, from.label))
+      : icon(svgPath),
     h(
       "span",
       { class: "text" },
@@ -174,8 +185,10 @@ let view: "unlocked" | "locked" | "other" = "other";
 
 // the logins shown, so typing in the field can narrow them down without asking again
 let loginsView:
-  | { logins: { ref: string; username: string }[]; hostname: string; chosen?: string; error?: string }
+  | { logins: { ref: string; username: string; account: string }[]; hostname: string; chosen?: string; error?: string }
   | undefined;
+/** Whether the logins listed come with rows to unlock the accounts still locked (theirs aren't listed). */
+let offeredUnlock = false;
 /** What the user typed into the username field: only logins starting with it are listed. */
 let query = "";
 /** Whether the user asked for the logins besides the one chosen on the sign-in's previous step. */
@@ -193,12 +206,9 @@ async function showLogins(error?: string) {
     loginsView = undefined;
     if (orGenerate) return showGenerate();
     const draw = () => {
-      render(
-        message(`No saved passwords for ${result.hostname ?? "this site"}.`),
-        openPasswordsRow(true),
-        passkeyRow(),
-      );
+      render(message(noneSaved(result.hostname)), ...lockedRows(), ...openAppRows(true), passkeyRow());
       redraw = draw;
+      listingLogins = true;
     };
     // nothing to offer on focus alone: out of the way until asked for (the passkey row is an offer)
     if (quiet && !hiddenPasskeys) {
@@ -228,15 +238,51 @@ function renderLogins() {
   // a click away. Back on the username step, the user may well be after another one: all of them.
   const focused = onPasswordField && chosen !== undefined && !prefix && !showOthers && matches.length > 1;
   const shown = focused ? matches.slice(0, 1) : matches;
+  const sources = sourceAccounts(logins);
+  // below the logins: unlocking the accounts still locked, the app, passkeys (a line only above some)
+  const below = [...(prefix ? [] : lockedRows()), ...openAppRows(false), prefix ? null : passkeyRow()].filter(
+    (node): node is HTMLButtonElement => node !== null,
+  );
   render(
-    ...shown.map(({ ref, username }) => row(KEY, username || "(no username)", hostname, () => void fill(ref))),
+    ...shown.map(({ ref, username, account }) =>
+      row(KEY, username || "(no username)", hostname, () => void fill(ref), "detail", sources?.get(account)),
+    ),
     focused ? othersRow(matches.length - 1, renderLogins) : null,
     error ? message(error, true) : null,
-    h("hr", { class: "separator" }),
-    openPasswordsRow(false),
-    prefix ? null : passkeyRow(),
+    footer(below),
   );
   redraw = renderLogins;
+  listingLogins = true;
+}
+
+/**
+ * "No saved passwords for github.com", and with an account still locked, in which it looked: the
+ * locked one may well have some.
+ */
+function noneSaved(hostname: string | undefined): string {
+  const site = hostname ?? "this site";
+  const open = accountViews.filter((a) => usableAccount(a) && a.state === "unlocked");
+  const locked = accountViews.some((a) => usableAccount(a) && a.state !== "unlocked");
+  const [only] = open;
+  return locked && open.length === 1 && only
+    ? `No saved passwords for ${site} in ${only.label}.`
+    : `No saved passwords for ${site}.`;
+}
+
+/** With logins from more than one account, the account each is from (a badge); from one, nothing. */
+function sourceAccounts(logins: { account: string }[]): Map<string, AccountView> | undefined {
+  const ids = new Set(logins.map((l) => l.account));
+  if (ids.size < 2) return undefined;
+  return new Map(accountViews.filter((a) => ids.has(a.id)).map((a) => [a.id, a]));
+}
+
+/**
+ * What's below a list (unlocking another account, opening an app), under a line, pinned to the
+ * bottom of a list long enough to scroll, so it's never 20 logins away. Nothing: no line either.
+ */
+function footer(rows: Node[]): HTMLElement | null {
+  if (rows.length === 0) return null;
+  return h("div", { class: "menu-footer" }, h("hr", { class: "separator" }), ...rows);
 }
 
 function othersRow(count: number, showAll: () => void) {
@@ -268,7 +314,7 @@ async function showCodes(error?: string) {
   if (result.codes.length === 0) {
     codesView = undefined;
     const draw = () =>
-      render(message(`No verification codes for ${result.hostname ?? "this site"}.`), openPasswordsRow(false));
+      render(message(`No verification codes for ${result.hostname ?? "this site"}.`), ...openAppRows(false));
     // on focus alone, out of the way until asked for, or until a code arrives
     if (quiet) {
       heldEmpty = draw;
@@ -304,8 +350,7 @@ function renderCodes(note = codesView?.note, isError = true) {
     ),
     focused ? othersRow(codes.length - 1, () => renderCodes(undefined)) : null,
     note ? message(note, isError) : null,
-    h("hr", { class: "separator" }),
-    openPasswordsRow(false),
+    footer(openAppRows(false)),
   );
 }
 
@@ -364,10 +409,9 @@ browser.runtime.onMessage.addListener((request: MenuMessage, sender) => {
     redraw?.();
   }
   // unlocked or locked elsewhere, like the popup
-  if (request.type === "accounts-changed") {
-    if (request.unlocked) void unlocked();
-    else if (view === "unlocked") void (mode === "email" ? showEmail() : showLocked());
-  }
+  if (request.type === "accounts-changed") void accountsChanged(request.unlocked);
+  // a sync brought logins added elsewhere (Bitwarden's web vault, say): list them again
+  if (request.type === "logins-changed" && listingLogins) void (mode === "email" ? showEmail() : showLogins());
   // Hide My Email was turned on in the popup, or the user said no there: show what's offered now
   if (request.type === "hide-my-email-changed" && mode === "email") void showEmail();
   // a new code arrived (by SMS, say): list them again, unless one is being filled
@@ -387,11 +431,7 @@ async function showGenerate(error?: string) {
   }
   // the site's rules leave nothing worth suggesting: say so quietly, the user types their own
   if ("unavailable" in passwords) {
-    return render(
-      message(`No suggestion. ${passwords.unavailable}`),
-      h("hr", { class: "separator" }),
-      openPasswordsRow(false),
-    );
+    return render(message(`No suggestion. ${passwords.unavailable}`), footer(openAppRows(false)));
   }
   const { strong, alphanumeric } = passwords;
   render(
@@ -406,8 +446,7 @@ async function showGenerate(error?: string) {
       ? passwordRow("Without Special Characters", alphanumeric, () => void useGenerated("alphanumeric"))
       : []),
     error ? message(error, true) : null,
-    h("hr", { class: "separator" }),
-    openPasswordsRow(false),
+    footer(openAppRows(false)),
   );
 }
 
@@ -485,8 +524,7 @@ function showGeneratedDone(saved: boolean) {
           () => close(),
         ),
     row(KEY, "Choose a Different Password", "", () => void showGenerate()),
-    h("hr", { class: "separator" }),
-    openPasswordsRow(false),
+    footer(openAppRows(false)),
   );
 }
 
@@ -517,7 +555,7 @@ async function showEmail() {
       whileAsking(send({ type: "email-suggestions", nonce, logins: withLogins })),
       send({ type: "get-status" }).catch(() => undefined),
     ]);
-    touchId = touchIdFor(status);
+    touchId = touchIdFor(status?.accounts);
     renderEmail(suggestions);
   } catch (e) {
     render(message(messageOf(e), true));
@@ -559,18 +597,25 @@ function renderEmail(suggestions: EmailSuggestions, error?: string) {
 
   // first, like Safari: the logins saved for the site, which this field may well be signing in to
   // (locked: unlocking first, as login fields offer)
+  listingLogins = false;
   const saved: Node[] = [];
   const usernames = new Set<string>();
   const { logins } = suggestions;
   view = logins?.state === "ready" ? "unlocked" : logins?.state === "locked" ? "locked" : "other";
   if (logins?.state === "ready") {
-    for (const { ref, username } of logins.logins) {
+    const sources = sourceAccounts(logins.logins);
+    for (const { ref, username, account } of logins.logins) {
       usernames.add(username.toLowerCase());
       if (!username.toLowerCase().startsWith(prefix)) continue;
-      saved.push(row(KEY, username || "(no username)", logins.hostname, () => void fillSavedLogin(ref)));
+      const from = sources?.get(account);
+      saved.push(
+        row(KEY, username || "(no username)", logins.hostname, () => void fillSavedLogin(ref), "detail", from),
+      );
     }
+    // accounts still locked: their logins aren't among these
+    if (!typing) saved.push(...lockedRows());
   } else if (!typing && logins?.state === "locked") {
-    saved.push(unlockRow());
+    saved.push(...unlockRows());
   }
 
   // below Hide My Email: the user's own emails, from their contact card (not again if saved)
@@ -634,12 +679,14 @@ function renderEmail(suggestions: EmailSuggestions, error?: string) {
   if (all.length === 0 && passkeys.length === 0) {
     if (logins?.state !== "ready") return typing ? hide() : close();
     if (typing || quiet) return hide();
-    render(message(`No saved passwords for ${logins.hostname}.`), openPasswordsRow(true));
+    render(message(noneSaved(logins.hostname)), ...openAppRows(true));
     redraw = () => renderEmail(suggestions, error);
+    listingLogins = true;
     return;
   }
   render(...all, ...(all.length === 0 ? passkeys.slice(1) : passkeys));
   redraw = () => renderEmail(suggestions, error);
+  listingLogins = logins?.state === "ready";
 }
 
 /** A row with a ✕ that dismisses it for good (without choosing the row). */
@@ -758,16 +805,52 @@ async function useAddress(address: string, reserve: boolean) {
 
 /** After unlocking, here or elsewhere: the menu's real content, if it was waiting for that. */
 async function unlocked() {
-  if (view !== "locked") return;
+  if (view !== "locked" && !offeredUnlock) return;
+  offeredUnlock = false;
   if (mode === "email") return showEmail();
   if (kind === "one-time-code") return showCodes();
   await (kind === "new-password" ? showGenerate() : showLogins());
 }
 
-function openPasswordsRow(withDetail: boolean) {
-  return row(OPEN, "Open Passwords App", withDetail ? "Look up or add a password" : "", async () => {
-    await send({ type: "open-passwords-app" }).catch(() => {});
-    close();
+/** An account locked or unlocked elsewhere: what's listed may have gone, or grown. */
+async function accountsChanged(anyUnlocked: boolean) {
+  await loadAccounts();
+  if (!anyUnlocked) {
+    if (view === "unlocked") await (mode === "email" ? showEmail() : showLocked());
+    return;
+  }
+  // one of several: the list again, without (or with) its logins
+  if (view === "unlocked" && listingLogins) return mode === "email" ? showEmail() : showLogins();
+  if (view === "unlocked" && kind === "one-time-code" && !fillingCode) return showCodes();
+  await unlocked();
+}
+
+/** The accounts, as of the menu opening (or the last change): which to unlock, whether an app opens. */
+let accountViews: AccountView[] = [];
+const accountsLoaded = loadAccounts();
+
+async function loadAccounts() {
+  accountViews = await send({ type: "list-accounts" }).catch(() => accountViews);
+}
+
+function usableAccount(account: AccountView): boolean {
+  return account.state !== "needs-setup" && account.state !== "unavailable";
+}
+
+/**
+ * "Open Apple Passwords", "Open Bitwarden": a row per account with an app or web vault, which opens
+ * at the page's site (Apple's at its entry, Bitwarden's searching for it).
+ */
+function openAppRows(withDetail: boolean): HTMLButtonElement[] {
+  const accounts = accountViews.filter((a) => usableAccount(a) && a.capabilities.openApp);
+  return accounts.map((account) => {
+    // two of one provider: told apart by their email
+    const shared = accounts.some((b) => b !== account && b.label === account.label);
+    const detail = shared ? (account.detail ?? "") : withDetail ? "Look up or add a password" : "";
+    return row(OPEN, `Open ${account.label}`, detail, async () => {
+      await send({ type: "open-passwords-app", account: account.id }).catch(() => {});
+      close();
+    });
   });
 }
 
@@ -791,8 +874,9 @@ async function fill(ref: string) {
 async function showLocked(error?: string) {
   view = "locked";
   const status = await send({ type: "get-status" }).catch(() => undefined);
-  touchId = touchIdFor(status);
-  const draw = () => render(unlockRow(), error ? message(error, true) : null, ...passkeyRows());
+  if (status) accountViews = status.accounts;
+  touchId = touchIdFor(status?.accounts);
+  const draw = () => render(...unlockRows(), error ? message(error, true) : null, ...passkeyRows());
   draw();
   redraw = draw;
 }
@@ -818,16 +902,49 @@ function passkeyRows(): Node[] {
 /** Whether the companion app can unlock with Touch ID (as of the last status asked for). */
 let touchId = false;
 
-function touchIdFor(status: Status | undefined): boolean {
-  const account = mainAccount(status);
-  return "unlock" in account && account.unlock.kind === "pairing-code" && account.unlock.touchId === true;
+function touchIdFor(accounts: AccountView[] | undefined): boolean {
+  const account = accounts?.find((a) => a.unlock.kind === "pairing-code");
+  return account?.unlock.kind === "pairing-code" && account.unlock.touchId === true;
 }
 
-function unlockRow(): HTMLButtonElement {
+/**
+ * One row per locked account. A code-unlocked one (Apple) unlocks here; one that takes a master
+ * password opens the popup for it, so the password is never typed into this frame on a web page.
+ * Alone, a row says what unlocking is for; with others (`named`), whose it is.
+ */
+function unlockRows(named = false): HTMLButtonElement[] {
+  const locked = accountViews.filter((a) => usableAccount(a) && a.state !== "unlocked");
+  if (locked.length === 0) return [appleUnlockRow(unlockTitle(), DISPLAY_NAME)];
+  const several = named || locked.length > 1;
+  return locked.map((account) => {
+    const title = several ? `Unlock ${account.label}` : unlockTitle();
+    // named among others, a row says whose it is: nothing more underneath (the Touch ID hint is
+    // for the one way in, before anything's unlocked)
+    if (account.unlock.kind === "pairing-code") return appleUnlockRow(title, several ? "" : account.label, !several);
+    const detail = several ? (account.detail ?? "") : [account.label, account.detail].filter(Boolean).join(" · ");
+    return row(LOCK, title, detail, async () => {
+      try {
+        await send({ type: "open-unlock", account: account.id });
+      } catch (e) {
+        return showLocked(messageOf(e));
+      }
+      close();
+    });
+  });
+}
+
+/** Below the logins of the accounts unlocked: a row for each one still locked. */
+function lockedRows(): HTMLButtonElement[] {
+  const locked = accountViews.some((a) => usableAccount(a) && a.state !== "unlocked");
+  offeredUnlock = locked;
+  touchId = touchIdFor(accountViews);
+  return locked ? unlockRows(true) : [];
+}
+
+function appleUnlockRow(title: string, detail: string, withHint = true): HTMLButtonElement {
   // with the companion app, Touch ID replaces typing the code; the row says so underneath
-  return row(LOCK, unlockTitle(), touchId ? "Touch ID enters the code for you" : DISPLAY_NAME, () =>
-    touchId ? void unlockWithTouchId() : void startPairing(),
-  );
+  const hint = touchId && withHint ? "Touch ID enters the code for you" : detail;
+  return row(LOCK, title, hint, () => (touchId ? void unlockWithTouchId() : void startPairing()));
 }
 
 /** Before this browser can reach Apple Passwords: one row that opens the setup page. */
@@ -835,7 +952,7 @@ function showSetup() {
   // set up and unlocked from the popup or the setup page: this menu shows the logins then
   view = "locked";
   render(
-    row(KEY, "Set Up Better Passwords", "One quick step to reach Apple Passwords", async () => {
+    row(KEY, "Set Up Better Passwords", "Choose your password manager", async () => {
       await send({ type: "open-setup-page" }).catch(() => {});
       close();
     }),
@@ -850,6 +967,8 @@ function unlockTitle() {
 }
 
 async function startPairing() {
+  // from below the logins of another account too: once unlocked, the list again, with these
+  view = "locked";
   try {
     // fresh, like the popup: a code asked for earlier may be valid still, but its window closed
     await send({ type: "request-code", fresh: true });
@@ -860,6 +979,7 @@ async function startPairing() {
 }
 
 async function unlockWithTouchId() {
+  view = "locked";
   render(message("Confirm with Touch ID…"));
   try {
     await send({ type: "unlock-with-touch-id" });
@@ -889,7 +1009,7 @@ function showCodeEntry(error?: string) {
     }
   });
   // closed Apple's code window? this brings a fresh one up
-  const again = h("button", { class: "link", type: "button", textContent: "Show code again" });
+  const again = h("button", { class: "link", type: "button", textContent: "Show Code Again" });
   again.addEventListener("click", async () => {
     input.value = "";
     await send({ type: "request-code", fresh: true }).catch((e) => showCodeEntry(messageOf(e)));
@@ -939,10 +1059,13 @@ function messageOf(error: unknown): string {
   return text || "Something went wrong.";
 }
 
-if (mode === "locked") void showLocked();
-else if (mode === "setup") showSetup();
-else if (mode === "generate") void showGenerate();
-else if (mode === "email") void showEmail();
-else if (mode === "codes") void showCodes();
-else if (mode === "generated" || mode === "generated-unsaved") showGeneratedDone(mode === "generated");
-else void showLogins();
+// the accounts first: which rows the views below show depends on them
+void accountsLoaded.then(() => {
+  if (mode === "locked") void showLocked();
+  else if (mode === "setup") showSetup();
+  else if (mode === "generate") void showGenerate();
+  else if (mode === "email") void showEmail();
+  else if (mode === "codes") void showCodes();
+  else if (mode === "generated" || mode === "generated-unsaved") showGeneratedDone(mode === "generated");
+  else void showLogins();
+});

@@ -1,7 +1,8 @@
 import type { ScriptPublicPath } from "wxt/utils/inject-script";
-import { appleDefaultSettings } from "@/src/accounts/apple/account.ts";
+import { APPLE_PROVIDER, appleDefaultSettings } from "@/src/accounts/apple/account.ts";
 import { createAppleAccount } from "@/src/accounts/apple/index.ts";
-import { Accounts, type AccountsStore, type StoredAccount } from "@/src/accounts/registry.ts";
+import { BITWARDEN_PROVIDER, BitwardenAccount, createBitwardenAccount } from "@/src/accounts/bitwarden/index.ts";
+import { Accounts, type AccountsStore, type Entry, type StoredAccount, siteUrl } from "@/src/accounts/registry.ts";
 import type { Account, AccountSettings, AccountState } from "@/src/accounts/types.ts";
 import { HME_CONSENT_PORT, hasHideMyEmailConsent } from "@/src/aliases/icloud/consent.ts";
 import { ICloudAliases } from "@/src/aliases/icloud/provider.ts";
@@ -10,6 +11,7 @@ import { Companion } from "@/src/companion.ts";
 import { fillCredentials } from "@/src/fill.ts";
 import {
   type AutofillStatus,
+  type BitwardenSignInStep,
   CONTENT_SCRIPT_REQUESTS,
   type ContactEmailsState,
   type ContentMessage,
@@ -23,6 +25,7 @@ import {
   type NewPasswordContext,
   type NewPasswordResult,
   type OneTimeCodesResult,
+  POPUP_PORT,
   type Request,
   type Settings,
   type SignInState,
@@ -45,8 +48,14 @@ import { fillableUrl, frameOriginToFill, sameFillableOrigin } from "@/src/url-po
 
 const KEEP_ALIVE = "keep-alive";
 
-/** The one account so far, created for every install (see Accounts). */
+/** Apple Passwords' account, which every install starts with (see Accounts). */
 const APPLE_ACCOUNT = "apple";
+
+/**
+ * A Bitwarden account's options until the user changes them. It gives out passwords without
+ * asking once unlocked, so it locks with the computer; Touch ID isn't for it.
+ */
+const BITWARDEN_DEFAULTS: AccountSettings = { lockOnScreenLock: true, touchId: false, lockAfterMinutes: 0 };
 
 /** A generated password filled into a tab, until the password manager has it. */
 interface GeneratedLogin {
@@ -92,15 +101,28 @@ export default defineBackground(() => {
   // the companion app is Mac only; elsewhere it's never asked, nor offered
   const companion = new Companion(undefined, undefined, async () => (await platform()) === "mac");
 
-  const accounts = new Accounts(
-    [
-      {
-        account: createAppleAccount(APPLE_ACCOUNT, companion),
+  /** Makes the account a stored entry names: each provider's adapter, wired into the browser. */
+  function accountEntry({ id, provider }: Pick<StoredAccount, "id" | "provider">): Entry | undefined {
+    if (provider === APPLE_PROVIDER) {
+      return {
+        account: createAppleAccount(id, companion),
         defaults: async () => appleDefaultSettings(await platform()),
-      },
-    ],
-    accountsStore(),
-  );
+      };
+    }
+    if (provider === BITWARDEN_PROVIDER) {
+      const account = createBitwardenAccount(id, async () => (await accounts.settings(id)).lockAfterMinutes);
+      // only reads storage: a new worker finds an unlocked vault unlocked still
+      void account.connect().catch(() => {});
+      return { account, defaults: async () => BITWARDEN_DEFAULTS };
+    }
+    return undefined;
+  }
+
+  const accounts = new Accounts([], accountsStore(), {
+    create: accountEntry,
+    initial: [{ id: APPLE_ACCOUNT, provider: APPLE_PROVIDER }],
+    saveTo: async () => (await getSettings()).saveNewLoginsTo || undefined,
+  });
   // moves options kept from before accounts existed to the account now, before anything changes them
   void accounts.views().catch(() => {});
 
@@ -110,7 +132,10 @@ export default defineBackground(() => {
     if (accounts.anyUnlocked) void browser.alarms.create(KEEP_ALIVE, { periodInMinutes: 0.5 });
     else if (!accounts.busy) void browser.alarms.clear(KEEP_ALIVE);
   });
-  browser.alarms.onAlarm.addListener(() => {});
+  // also when accounts the extension unlocks lock for sitting unused (see AccountSettings.lockAfterMinutes)
+  browser.alarms.onAlarm.addListener(() => {
+    for (const account of accounts.unlocked) void account.lockIfIdle?.().catch(() => {});
+  });
 
   // An account unlocked or locked. Locking forgets every generated and sent password, like the
   // session key. Open menus asked before an unlock (or a lock) elsewhere, e.g. the code typed into
@@ -126,11 +151,15 @@ export default defineBackground(() => {
 
   // A new verification code (one that just arrived by SMS, say): open menus and the popup list again
   accounts.onOneTimeCodesChanged(() => tellMenus({ type: "one-time-codes-changed" }));
+  accounts.onLoginsChanged(() => tellMenus({ type: "logins-changed" }));
 
   // Remembered while this browser can't reach an account, so the first connection after setup is
   // announced once (by the popup or the setup page), even if the popup closed in between.
   const SETUP_PENDING = "setupPending";
-  accounts.onChange((_, { state }) => {
+  // Only accounts set up on the computer (Apple's helper) count: one that's signed in to (Bitwarden)
+  // has no setup to announce.
+  accounts.onChange((account, { state }) => {
+    if (account.unlock.kind === "password") return;
     if (state === "needs-setup") void browser.storage.local.set({ [SETUP_PENDING]: true });
     else if (state === "unlocked") void browser.storage.local.remove(SETUP_PENDING);
   });
@@ -147,17 +176,14 @@ export default defineBackground(() => {
     if (unavailable) void action?.setBadgeBackgroundColor({ color: "#e8a33d" });
   });
 
-  /** Apple's helper comes with macOS and with iCloud for Windows; elsewhere there's nothing to set up. */
-  const supported = platform().then((os) => os !== "other");
-
   /** Accounts that can be unlocked here (set up, and not refused by the system). */
   const unlockable = (account: Account) => !CANT_UNLOCK.includes(account.status.state);
 
-  // A fresh install that can't reach an account yet opens the setup page, so nobody has to find
-  // the toolbar button first; so does one that can't be used here, which explains it. A computer
-  // that is set up already (a reinstall) sees nothing.
+  // A fresh install that can't reach an account yet opens the setup page (where the user picks a
+  // password manager), so nobody has to find the toolbar button first; so does one that can't be
+  // used here, which explains it. A computer that is set up already (a reinstall) sees nothing.
   browser.runtime.onInstalled.addListener(async ({ reason }) => {
-    if (reason !== "install" || !(await supported)) return;
+    if (reason !== "install") return;
     await accounts.connect(["offline", "needs-setup"]);
     if (!accounts.all.every(unlockable)) await openSetupPage();
   });
@@ -222,7 +248,9 @@ export default defineBackground(() => {
     if (!base.accounts.some(unlockableView)) return base;
     const state = await companion.state();
     const update = await companion.update();
-    const connected = base.accounts.some((a) => a.state === "locked" || a.state === "unlocking");
+    const connected = base.accounts.some(
+      (a) => a.unlock.kind !== "password" && (a.state === "locked" || a.state === "unlocking"),
+    );
     const justConnected = connected && (await browser.storage.local.get(SETUP_PENDING))[SETUP_PENDING];
     return {
       ...base,
@@ -238,7 +266,8 @@ export default defineBackground(() => {
    * menu iframe), every tab-scoped request is bound to that tab, whatever `tabId` they pass.
    */
   type Caller =
-    | { kind: "page"; tabId?: number; frameId?: number }
+    // `menu`: the inline menu, a frame on a web page, where a master password is never typed
+    | { kind: "page"; tabId?: number; frameId?: number; menu?: true }
     | { kind: "content-script"; tabId: number; frameId: number; url: string };
 
   function tabOf(caller: Caller, requested?: number): number {
@@ -341,7 +370,7 @@ export default defineBackground(() => {
       if (accounts.all.some(unlockable)) return { show: "locked" };
       // an unlock button that can't work helps nobody; the toolbar badge and popup explain it
       if (!accounts.all.some((account) => account.status.state === "needs-setup")) return { show: "none" };
-      return { show: (await supported) ? "setup" : "none" };
+      return { show: "setup" };
     }
     // saving needs the session, so new passwords are offered only once unlocked
     if (kind === "new-password") return { show: "generate" };
@@ -378,7 +407,7 @@ export default defineBackground(() => {
   async function accountFor(hostname: string): Promise<string | undefined> {
     const chosen = chosenLogin(hostname);
     if (chosen !== undefined) return chosen.username;
-    const usernames = await accounts.usernames(hostname);
+    const usernames = await accounts.usernames(siteUrl(hostname));
     return usernames.length === 1 ? usernames[0] : undefined;
   }
 
@@ -470,12 +499,12 @@ export default defineBackground(() => {
    */
   async function saveUnconfirmed(tabId: number, entry: (typeof unconfirmed)[number]) {
     const { hostname, username, password } = entry;
-    const target = accounts.saveTarget(hostname);
-    const before = await accounts.usernames(hostname, target);
+    const target = await accounts.saveTarget(siteUrl(hostname), username);
+    const before = await accounts.usernames(siteUrl(hostname), target);
     await target.save({ hostname, username, password }, { tabId });
     if (username !== "" && before.includes(username)) return;
     // the popup may close while macOS asks: this carries on without it
-    void waitForLogin(() => accounts.usernames(hostname, target), username, before).then((saved) => {
+    void waitForLogin(() => accounts.usernames(siteUrl(hostname), target), username, before).then((saved) => {
       if (saved !== undefined) forget(password);
     });
   }
@@ -510,12 +539,17 @@ export default defineBackground(() => {
     chosenLogins.delete(generated.hostname);
     generated.username = username;
     const { hostname, password } = generated;
-    const target = accounts.saveTarget(hostname);
-    const before = await accounts.usernames(hostname, target);
-    await target.save({ hostname, username, password }, { tabId });
+    const target = await accounts.saveTarget(siteUrl(hostname), username);
+    const before = await accounts.usernames(siteUrl(hostname), target);
+    const outcome = await offerSave(tabId, { hostname, username, password }, target);
     const tab = tabId;
+    if (outcome === "declined") {
+      generated.state = "unsaved";
+      return;
+    }
+    if (outcome === "saved") return markSaved(tab, generated, username, true);
     if (username !== "" && before.includes(username)) return markSaved(tab, generated, username, false);
-    const saved = await waitForLogin(() => accounts.usernames(hostname, target), username, before);
+    const saved = await waitForLogin(() => accounts.usernames(siteUrl(hostname), target), username, before);
     if (generated.username !== username) return; // a newer submit took over
     if (saved === undefined) generated.state = "unsaved";
     // without a username, it's the one the user typed into macOS's Save dialog
@@ -571,7 +605,7 @@ export default defineBackground(() => {
     // a password-only step: the account chosen on the username step
     username ||= chosenLogin(hostname, tabId)?.username ?? "";
     const saved = await Promise.resolve()
-      .then(() => accounts.usernames(hostname, accounts.saveTarget(hostname)))
+      .then(async () => accounts.usernames(siteUrl(hostname), await accounts.saveTarget(siteUrl(hostname), username)))
       .catch(() => undefined);
     if (!saved) return undefined;
     // no username: one of the site's saved accounts, unless it has none
@@ -603,7 +637,8 @@ export default defineBackground(() => {
           sentLogins.delete(tabId);
           if (state === "failed") return;
           const { hostname, password } = login;
-          await accounts.saveTarget(hostname).save({ hostname, username, password }, { tabId });
+          const target = await accounts.saveTarget(siteUrl(hostname), username);
+          await offerSave(tabId, { hostname, username, password }, target);
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 400));
@@ -664,6 +699,104 @@ export default defineBackground(() => {
   }
 
   /** Opens the popup to ask for Hide My Email's permissions, or a small window if it can't open. */
+  // The save card (save.html): asks before saving to accounts that don't ask themselves. Keyed by
+  // the nonce given to the tab's content script, which frames the card with it.
+  const saveCards = new Map<
+    string,
+    {
+      tabId: number;
+      login: { hostname: string; username: string; password: string };
+      target: Account;
+      update: boolean;
+      done: (saved: boolean) => void;
+    }
+  >();
+  const NEVER_SAVE = "neverSaveSites";
+  const SAVE_CARD_MS = 2 * 60_000;
+
+  /**
+   * Saves a login to `target`, asking first where the provider doesn't (Bitwarden): "asked" when the
+   * provider asks (macOS for Apple; whether it saved shows later), else whether the user saved it.
+   */
+  async function offerSave(
+    tabId: number,
+    login: { hostname: string; username: string; password: string },
+    target: Account,
+  ): Promise<"asked" | "saved" | "declined"> {
+    if (target.capabilities.asksBeforeSaving) {
+      await target.save(login, { tabId });
+      return "asked";
+    }
+    const never = ((await browser.storage.local.get(NEVER_SAVE))[NEVER_SAVE] as string[] | undefined) ?? [];
+    if (never.includes(login.hostname)) return "declined";
+    const update =
+      login.username !== "" && (await accounts.usernames(siteUrl(login.hostname), target)).includes(login.username);
+    const nonce = crypto.randomUUID();
+    const answered = new Promise<boolean>((resolve) => {
+      saveCards.set(nonce, { tabId, login, target, update, done: resolve });
+    });
+    const forget = (saved: boolean) => {
+      const card = saveCards.get(nonce);
+      if (!card) return;
+      saveCards.delete(nonce);
+      card.done(saved);
+    };
+    setTimeout(() => {
+      forget(false);
+      void relay(tabId, { type: "save-card-close", nonce }, 0).catch(() => {});
+    }, SAVE_CARD_MS);
+    try {
+      await relay(tabId, { type: "show-save-card", nonce }, 0);
+    } catch {
+      forget(false);
+    }
+    return (await answered) ? "saved" : "declined";
+  }
+
+  function saveCard(caller: Caller, nonce: string) {
+    const card = saveCards.get(nonce);
+    if (!card || caller.kind !== "page" || caller.tabId !== card.tabId) throw new Error("not allowed");
+    return { nonce, ...card };
+  }
+
+  /** The account the inline menu asked to unlock, for the popup to open to (see popup-intent). */
+  let unlockAsk: { account: string; at: number } | undefined;
+
+  /** Opens the popup to unlock `account`; where it can't open (Firefox, no click), a small window. */
+  async function askToUnlock(account: string) {
+    unlockAsk = { account, at: Date.now() };
+    try {
+      const action = toolbarAction() as { openPopup?: () => Promise<void> } | undefined;
+      if (!action?.openPopup) throw new Error("no openPopup");
+      await action.openPopup();
+    } catch {
+      unlockAsk = undefined;
+      await browser.windows.create({
+        type: "popup",
+        url: browser.runtime.getURL(`/popup.html?unlock=${encodeURIComponent(account)}`),
+        width: 360,
+        height: 280,
+      });
+    }
+  }
+
+  let openPopups = 0;
+  browser.runtime.onConnect.addListener((port) => {
+    if (port.name !== POPUP_PORT || port.sender?.id !== browser.runtime.id) return;
+    openPopups++;
+    port.onDisconnect.addListener(() => openPopups--);
+  });
+
+  /**
+   * The Touch ID dialog closes the popup that asked for it, so dismissing it ("Type the Code
+   * Instead", Esc) would leave a code on screen and nowhere to type it: the popup comes back.
+   */
+  async function reopenToType(account: Account) {
+    // the browser gets the keyboard back a moment after the dialog goes
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    if (openPopups === 0 && account.status.state === "unlocking") await askToUnlock(account.id);
+  }
+
   async function askHideMyEmailConsent(tabId: number, frameId: number) {
     consentAsk = { tabId, frameId, at: Date.now() };
     try {
@@ -716,7 +849,7 @@ export default defineBackground(() => {
     const url = await tabUrl(tabId);
     if (!url) return undefined;
     try {
-      return { state: "ready", hostname: url.hostname, logins: await accounts.logins(url.hostname, { tabId }) };
+      return { state: "ready", hostname: url.hostname, logins: await accounts.logins(url, { tabId }) };
     } catch {
       return undefined;
     }
@@ -768,6 +901,32 @@ export default defineBackground(() => {
     return settings;
   }
 
+  /** Refuses the inline menu: what the request carries (a master password) never goes into a web page. */
+  function notFromMenu(caller: Caller) {
+    if (caller.kind !== "page" || caller.menu) throw new Error("not allowed");
+  }
+
+  /**
+   * Signs in to Bitwarden, as a new account or `request.account` again. Each step is the same
+   * request plus a code; nothing is kept between steps, so an account is added only once signed in.
+   */
+  async function bitwardenSignIn(
+    request: Extract<Request, { type: "bitwarden-sign-in" }>,
+  ): Promise<BitwardenSignInStep> {
+    const { type: _, account: existing, ...signIn } = request;
+    const id = existing ?? `bitwarden-${crypto.randomUUID().slice(0, 8)}`;
+    const entry = existing ? undefined : accountEntry({ id, provider: BITWARDEN_PROVIDER });
+    const account = existing ? accounts.get(existing) : entry?.account;
+    if (!(account instanceof BitwardenAccount)) throw new Error("That isn't a Bitwarden account.");
+    const step = await account.signIn(signIn);
+    if (step.status !== "signed-in") {
+      // a new account that didn't finish keeps nothing (signing in stored its record only at the end)
+      return step;
+    }
+    if (entry) await accounts.add(entry);
+    return { status: "signed-in", account: id };
+  }
+
   async function handle(request: Request, caller: Caller): Promise<unknown> {
     if (caller.kind === "content-script") {
       if (request.type === "autofill-status")
@@ -802,9 +961,16 @@ export default defineBackground(() => {
         await accounts.connect(["offline", "needs-setup"]);
         return fullStatus();
       case "unlock-with-touch-id": {
-        const { unlock } = accounts.pairingCode(request.account);
+        const account = accounts.pairingCode(request.account);
+        const { unlock } = account;
         if (!unlock.unlockWithTouchId) throw new Error("This account can't unlock with Touch ID.");
-        await unlock.unlockWithTouchId();
+        try {
+          await unlock.unlockWithTouchId();
+        } catch (error) {
+          // asked from the popup (or its small window); the inline menu shows its own code box
+          if (caller.kind === "page" && !caller.menu) void reopenToType(account);
+          throw error;
+        }
         return status();
       }
       case "request-code":
@@ -816,6 +982,27 @@ export default defineBackground(() => {
       case "lock":
         accounts.lock(request.account);
         return status();
+      case "unlock-with-password": {
+        notFromMenu(caller);
+        const account = accounts.get(request.account);
+        if (account.unlock.kind !== "password") throw new Error("This account doesn't unlock with a password.");
+        await account.unlock.unlock(request.password);
+        return status();
+      }
+      case "bitwarden-sign-in":
+        notFromMenu(caller);
+        return bitwardenSignIn(request);
+      case "bitwarden-send-email-code": {
+        notFromMenu(caller);
+        const account = createBitwardenAccount("sign-in", async () => 0);
+        await account.sendEmailCode(request);
+        return null;
+      }
+      case "remove-account":
+        notFromMenu(caller);
+        await accounts.remove(request.account);
+        if ((await getSettings()).saveNewLoginsTo === request.account) await saveSettings({ saveNewLoginsTo: "" });
+        return status();
       case "install-update":
         // restarting locks every account anyway
         updates.apply();
@@ -824,7 +1011,7 @@ export default defineBackground(() => {
         const tabId = tabOf(caller, request.tabId);
         const url = await tabUrl(tabId);
         if (!url) return { logins: [] };
-        const logins = await accounts.logins(url.hostname, { tabId });
+        const logins = await accounts.logins(url, { tabId });
         // the login chosen on this sign-in's previous step comes first
         const current = chosenLogin(url.hostname, tabId);
         const first = logins.filter(({ ref }) => ref === current?.ref);
@@ -961,8 +1148,8 @@ export default defineBackground(() => {
       case "open-passwords-app": {
         const tabId = caller.tabId ?? request.tabId;
         const url = tabId === undefined ? undefined : await tabUrl(tabId).catch(() => undefined);
-        const account = accounts.appAccount();
-        if (!account) throw new Error("No password manager app to open.");
+        const account = request.account === undefined ? accounts.appAccount() : accounts.get(request.account);
+        if (!account?.capabilities.openApp) throw new Error("No password manager app to open.");
         await account.openApp(url?.origin);
         return null;
       }
@@ -995,7 +1182,50 @@ export default defineBackground(() => {
         const hideMyEmailConsent = ask !== undefined && Date.now() - ask.at < CONSENT_ASK_MS;
         // asked once: opened again later, the popup is its usual self
         if (ask) ask.at = 0;
-        return { hideMyEmailConsent };
+        const unlock = unlockAsk && Date.now() - unlockAsk.at < CONSENT_ASK_MS ? unlockAsk.account : undefined;
+        unlockAsk = undefined;
+        return { hideMyEmailConsent, ...(unlock ? { unlock } : {}) };
+      }
+      case "save-card": {
+        const { login, target, update } = saveCard(caller, request.nonce);
+        return { hostname: login.hostname, username: login.username, update, account: target.label };
+      }
+      case "save-card-resize": {
+        const { tabId } = saveCard(caller, request.nonce);
+        await relay(tabId, { type: "save-card-resize", nonce: request.nonce, height: request.height }, 0);
+        return null;
+      }
+      case "save-card-answer": {
+        const card = saveCard(caller, request.nonce);
+        let saved = false;
+        if (request.answer === "save") {
+          await card.target.save(card.login, { tabId: card.tabId });
+          saved = true;
+        } else if (request.answer === "never") {
+          const stored = (await browser.storage.local.get(NEVER_SAVE))[NEVER_SAVE] as string[] | undefined;
+          await browser.storage.local.set({ [NEVER_SAVE]: [...new Set([...(stored ?? []), card.login.hostname])] });
+        }
+        saveCards.delete(request.nonce);
+        card.done(saved);
+        // saved: the card says so for a moment first
+        setTimeout(
+          () => void relay(card.tabId, { type: "save-card-close", nonce: request.nonce }, 0).catch(() => {}),
+          saved ? 1_500 : 0,
+        );
+        return { saved };
+      }
+      case "open-unlock":
+        await askToUnlock(accounts.get(request.account).id);
+        return null;
+      case "list-accounts":
+        return accounts.views();
+      case "add-account": {
+        notFromMenu(caller);
+        if (request.provider !== APPLE_PROVIDER) throw new Error("That password manager is added by signing in.");
+        const entry = accountEntry({ id: APPLE_ACCOUNT, provider: APPLE_PROVIDER });
+        if (entry && !accounts.all.some((a) => a.id === APPLE_ACCOUNT)) await accounts.add(entry);
+        await accounts.connect(["offline", "needs-setup"]);
+        return fullStatus();
       }
       case "dismiss-hide-my-email-hint":
         await saveSettings({ hideMyEmailHint: false });
@@ -1088,7 +1318,7 @@ export default defineBackground(() => {
   ): Promise<string> {
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
-    const { username } = await accounts.login(url.hostname, ref);
+    const { username } = await accounts.login(url, ref);
     const result = await fill(url.origin, username, null);
     if (result === "filled") chosenLogins.set(url.hostname, { username, ref, tabId, at: Date.now() });
     if (result !== "needs-password") return result;
@@ -1134,7 +1364,7 @@ export default defineBackground(() => {
   async function credentialFor(tabId: number, ref: string) {
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
-    const credential = await accounts.credential(url.hostname, ref, { tabId });
+    const credential = await accounts.credential(url, ref, { tabId });
     return { url, credential };
   }
 
@@ -1163,6 +1393,7 @@ export default defineBackground(() => {
               kind: "page",
               tabId: sender.tab.id,
               ...(sender.frameId === undefined ? {} : { frameId: sender.frameId }),
+              ...(isMenu ? { menu: true as const } : {}),
             };
     } else if (
       import.meta.env.FIREFOX &&
@@ -1198,15 +1429,18 @@ export default defineBackground(() => {
     } else {
       return false;
     }
-    handle(request, caller).then(
-      (value) => sendResponse({ ok: true, value } satisfies Envelope<unknown>),
-      (error: unknown) =>
-        sendResponse({
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-          code: (error as { code?: string })?.code,
-        } as Envelope<unknown>),
-    );
+    // the stored accounts are made first (a worker that just started is reading them)
+    accounts.ready
+      .then(() => handle(request, caller))
+      .then(
+        (value) => sendResponse({ ok: true, value } satisfies Envelope<unknown>),
+        (error: unknown) =>
+          sendResponse({
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+            code: (error as { code?: string })?.code,
+          } as Envelope<unknown>),
+      );
     return true;
   });
 });

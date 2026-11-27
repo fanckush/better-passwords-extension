@@ -6,8 +6,11 @@ import { defineConfig } from "wxt";
 import { DISPLAY_NAME, EXTENSION_PUBLIC_KEY, FILL_MATCHES, FIREFOX_EXTENSION_ID, STORE_TITLE } from "./src/config.ts";
 
 const EXTENSION_CSP =
-  "default-src 'self'; script-src 'self'; object-src 'none'; img-src 'self' data:; " +
-  "connect-src 'self' https://*.icloud.com; frame-src 'self' betterpasswords:";
+  // wasm: Argon2id, for Bitwarden accounts that derive their key with it (hash-wasm)
+  "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; img-src 'self' data:; " +
+  // iCloud for Hide My Email; Bitwarden's cloud servers (US and EU) for Bitwarden accounts
+  "connect-src 'self' https://*.icloud.com https://*.bitwarden.com https://*.bitwarden.eu; " +
+  "frame-src 'self' betterpasswords:";
 
 export default defineConfig({
   outDirTemplate: "{{browser}}-mv{{manifestVersion}}{{modeSuffix}}",
@@ -83,14 +86,15 @@ export default defineConfig({
       // Chromium: reachable only at a per-session URL, so pages can't load (or probe for) the menu
       web_accessible_resources: [
         {
-          resources: ["menu.html"],
+          // the inline menu, and the card asking to save a login
+          resources: ["menu.html", "save.html"],
           matches: FILL_MATCHES,
           ...(browser === "firefox" ? {} : { use_dynamic_url: true }),
         },
       ],
       action: { default_title: DISPLAY_NAME },
       // Extension pages and the worker load only our own code and reach only iCloud (Hide My
-      // Email), so a future bug or a hijacked dependency can't send data anywhere else.
+      // Email) and Bitwarden, so a future bug or a hijacked dependency can't send data anywhere else.
       content_security_policy: browser === "firefox" ? EXTENSION_CSP : { extension_pages: EXTENSION_CSP },
       ...(browser === "firefox"
         ? {

@@ -11,7 +11,7 @@ test("fills a sign-in inside an iframe of the page's own origin", async ({ conte
 
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await choose(menu, "e2e-user");
 
   await expect(form.locator("#user")).toHaveValue("e2e-user");
@@ -104,7 +104,7 @@ test.describe("a sign-in frame on another host of the page's site", () => {
     await field.click();
     const menu = await menuFrame(field.page());
     await choose(menu, "Unlock to fill passwords");
-    await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+    await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
     await choose(menu, username);
   }
 

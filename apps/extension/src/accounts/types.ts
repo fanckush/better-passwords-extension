@@ -73,8 +73,13 @@ export type Unlock = PairingCodeUnlock | PasswordUnlock;
 export interface Capabilities {
   oneTimeCodes: boolean;
   savePasswords: boolean;
-  /** Opening the provider's own app, at a site's entry if given. */
+  /** Opening the provider's own app (or web vault), at the site's logins if given. */
   openApp: boolean;
+  /**
+   * The provider asks the user before it saves a login (macOS does, for Apple Passwords). Accounts
+   * that don't get our own prompt on the page instead: never both.
+   */
+  asksBeforeSaving: boolean;
 }
 
 /** Options that differ per account. Each adapter knows which apply to it. */
@@ -83,6 +88,8 @@ export interface AccountSettings {
   lockOnScreenLock: boolean;
   /** Unlock with Touch ID through the companion app, when the account and app allow it. */
   touchId: boolean;
+  /** Lock after this many minutes unused, for accounts the extension unlocks; 0: when the browser quits. */
+  lockAfterMinutes: number;
 }
 
 /** An account as the extension's pages see it (in Status). */
@@ -90,6 +97,7 @@ export interface AccountView extends AccountStatus {
   id: string;
   provider: string;
   label: string;
+  detail?: string;
   unlock: UnlockMethod;
   capabilities: Capabilities;
   settings: AccountSettings;
@@ -101,6 +109,8 @@ export interface Account {
   readonly provider: string;
   /** How the account is named to the user. */
   readonly label: string;
+  /** What tells it apart from others of its provider (the email it signs in with). */
+  readonly detail?: string | undefined;
   readonly capabilities: Capabilities;
   readonly unlock: Unlock;
   readonly status: AccountStatus;
@@ -108,22 +118,32 @@ export interface Account {
   onChange(listener: (status: AccountStatus) => void): () => void;
   /** Called when the account has a new verification code (one that just arrived by SMS, say). */
   onOneTimeCodesChanged(listener: () => void): () => void;
+  /** Called when its logins changed (a sync brought ones added elsewhere), for accounts that sync. */
+  onLoginsChanged?(listener: () => void): () => void;
 
   /** Connects without unlocking. `retry`: the user asked, after the account was unavailable. */
   connect(options?: { retry?: boolean }): Promise<void>;
   lock(): void;
+  /** Forgets the account in this browser (signs out), when it's removed. */
+  remove?(): Promise<void>;
+  /** Locks if it went unused longer than its settings allow (for accounts the extension unlocks). */
+  lockIfIdle?(): Promise<void>;
 
-  /** The logins saved for a site. */
-  logins(hostname: string, tab?: Tab): Promise<LoginItem[]>;
-  /** One login (no password) by id, if it's still saved. */
-  login(hostname: string, id: string): Promise<LoginItem | undefined>;
+  /**
+   * The logins saved for the page at `page`. Most providers match its hostname; some (Bitwarden)
+   * let a login match only certain paths, so the whole URL is given.
+   */
+  logins(page: URL, tab?: Tab): Promise<LoginItem[]>;
+  /** One login (no password) by id, if it's still saved for the page. */
+  login(page: URL, id: string): Promise<LoginItem | undefined>;
   /** A login's password: the provider may ask the user first (Touch ID). */
-  credential(hostname: string, id: string, tab: Tab): Promise<Credential | undefined>;
+  credential(page: URL, id: string, tab: Tab): Promise<Credential | undefined>;
   /** The verification codes it has for a page, without digits. */
   oneTimeCodes(url: URL, tab?: Tab): Promise<OneTimeCodeItem[]>;
   /** A code's digits, current now: the provider may ask the user first. */
   oneTimeCode(url: URL, id: string, tab: Tab): Promise<string | undefined>;
   /** Saves a login: a new one, or a new password for a saved one. The provider may ask first. */
   save(login: { hostname: string; username: string; password: string }, tab: Tab): Promise<void>;
+  /** Opens the provider's app or web vault; `url`: a page, to show its site's logins. */
   openApp(url?: string): Promise<void>;
 }

@@ -1,0 +1,20 @@
+{
+  "name": "@app/bitwarden",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bitwarden client: sign-in, vault sync and decryption, saving logins",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "tldts": "^7.5.5"
+  },
+  "devDependencies": {
+    "@app/fake-bitwarden": "workspace:*",
+    "@app/otp": "workspace:*"
+  }
+}

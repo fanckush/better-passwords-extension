@@ -10,8 +10,8 @@ test("unlocks from the inline menu and fills the form", async ({ context, siteUr
   // locked: the menu offers to unlock, and the code is typed inside the extension's own frame
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  // the code box and "Show code again" fit: nothing to scroll
-  await expect(menu.getByText("Show code again")).toBeVisible();
+  // the code box and "Show Code Again" fit: nothing to scroll
+  await expect(menu.getByText("Show Code Again")).toBeVisible();
   await page.waitForTimeout(300);
   expect(
     await menu.evaluate(() => {
@@ -19,7 +19,7 @@ test("unlocks from the inline menu and fills the form", async ({ context, siteUr
       return panel.scrollHeight - panel.clientHeight;
     }),
   ).toBeLessThanOrEqual(0);
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
 
   await choose(menu, "e2e-user");
   await expect(page.locator("#user")).toHaveValue("e2e-user");
@@ -36,7 +36,7 @@ test("moving to the next field opens a fresh menu that still fills", async ({ co
   await page.locator("#user").click();
   let menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("e2e-user")).toBeVisible();
 
   // Tab to the password field: the old frame is replaced, so the menu gets its full height back
@@ -46,7 +46,7 @@ test("moving to the next field opens a fresh menu that still fills", async ({ co
   await page.keyboard.press("Tab");
   await expect.poll(() => page.frames().some((f) => f.url().includes("/menu.html#") && f !== first)).toBe(true);
   menu = await menuFrame(page);
-  await expect(menu.getByText("Open Passwords App")).toBeVisible();
+  await expect(menu.getByText("Open Apple Passwords")).toBeVisible();
   const height = await page.locator("app-autofill-menu").evaluate((el) => el.getBoundingClientRect().height);
   expect(height).toBeGreaterThan(70);
 
@@ -61,7 +61,7 @@ test("a site without saved logins says so on every focus, not only after unlocki
   await page.locator("#pass").click();
   let menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("No saved passwords for 127.0.0.1.")).toBeVisible();
 
   await page.keyboard.press("Escape");
@@ -79,7 +79,7 @@ test("a site without saved logins shows nothing on focus alone, until the field 
   await page.locator("#pass").click();
   const first = await menuFrame(page);
   await choose(first, "Unlock to fill passwords");
-  await first.getByLabel("Verification code").fill(PAIRING_CODE);
+  await first.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(first.getByText("No saved passwords for 127.0.0.1.")).toBeVisible();
 
   // focus without a click (autofocus, Tab): the menu opens hidden, with nothing on screen
@@ -106,7 +106,7 @@ test("clicking the field's label keeps its menu open", async ({ context, siteUrl
   await page.locator("#pass").click();
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("e2e-user")).toBeVisible();
 
   await page.locator("label", { hasText: "Password" }).click({ position: { x: 5, y: 5 } });
@@ -124,7 +124,7 @@ test("arrow keys move between the field and the menu", async ({ context, siteUrl
   await page.locator("#pass").click();
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("e2e-user")).toBeVisible();
 
   await page.locator("#pass").focus();
@@ -143,9 +143,9 @@ test("opens the Passwords app for the current site", async ({ context, siteUrl, 
   await page.locator("#pass").click();
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
 
-  await choose(menu, "Open Passwords App");
+  await choose(menu, "Open Apple Passwords");
   await expect.poll(passwordsAppLaunches).toEqual([siteUrl]);
   await expect.poll(() => page.locator("app-autofill-menu").count()).toBe(0);
 });
@@ -156,7 +156,7 @@ test("Escape closes the menu and keeps it closed until the user asks again", asy
   await page.locator("#pass").click();
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("e2e-user")).toBeVisible();
 
   await page.locator("#pass").focus();
@@ -187,7 +187,7 @@ test("refuses to fill when the page makes the menu transparent", async ({ contex
   await page.locator("#pass").click();
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("e2e-user")).toBeVisible();
 
   // a clickjacking page fades everything out, hoping the user clicks blindly
@@ -205,7 +205,7 @@ test("refuses to fill when the page reveals a hidden menu only as the click land
   await page.locator("#pass").click();
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("e2e-user")).toBeVisible();
 
   // the page keeps the menu invisible, then shows it again the moment focus moves into it
@@ -252,7 +252,7 @@ test("refuses everything a copy of the menu without our nonce asks", async ({ co
   await page.locator("#pass").click();
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("e2e-user")).toBeVisible();
 
   // a copy of menu.html with a made-up nonce, as a page that found its address could frame it
@@ -295,7 +295,7 @@ test("a long list of logins scrolls inside the menu", async ({ context, siteUrl 
   await page.locator("#pass").click();
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("e2e-user")).toBeVisible();
   // make the list longer than the menu's cap, as on a site with many saved logins
   await menu.evaluate(() => {
@@ -334,7 +334,7 @@ test("an open menu follows an unlock and a lock done in the popup", async ({ con
   // the code typed into the popup instead of the menu
   const popup = await context.newPage();
   await popup.goto(popupUrl);
-  await popup.getByLabel("Verification code").fill(PAIRING_CODE);
+  await popup.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("e2e-user")).toBeVisible();
 
   await popup.getByRole("button", { name: "Lock" }).click();
@@ -358,7 +358,7 @@ test("the menu's Unlock shows a fresh code after the popup asked for one", async
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
   await expect.poll(codesShown).toBe(2);
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("e2e-user")).toBeVisible();
 });
 
@@ -371,9 +371,9 @@ test("without room under the field, opens above it, listed bottom-up and entered
   await page.locator("#pass").click();
   const menu = await menuFrame(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   const login = menu.getByRole("option", { name: /e2e-user/ });
-  const openApp = menu.getByRole("option", { name: /Open Passwords App/ });
+  const openApp = menu.getByRole("option", { name: /Open Apple Passwords/ });
   await expect(login).toBeVisible();
   const [field, host] = await Promise.all([
     page.locator("#pass").boundingBox(),
@@ -412,7 +412,7 @@ test.describe("typing a username", () => {
     await page.locator("#user").click();
     const menu = await menuFrame(page);
     await choose(menu, "Unlock to fill passwords");
-    await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+    await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
     await expect(menu.getByText("bob@example.com")).toBeVisible();
     await page.locator("#user").click();
     return menu;
@@ -512,7 +512,7 @@ test.describe("a sign-in in two steps", () => {
     await page.locator("#email").click();
     let menu = await menuFrame(page);
     await choose(menu, "Unlock to fill passwords");
-    await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+    await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
     await choose(menu, "bob@example.com");
     await expect(page.locator("#email")).toHaveValue("bob@example.com");
     // no password field yet: no password read, so no Touch ID

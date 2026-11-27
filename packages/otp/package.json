@@ -1,0 +1,13 @@
+{
+  "name": "@app/otp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "One-time codes (RFC 6238 TOTP, otpauth:// URIs, Steam) for the fake helper and Bitwarden",
+  "exports": {
+    ".": "./src/totp.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  }
+}

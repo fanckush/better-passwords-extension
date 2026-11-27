@@ -16,6 +16,7 @@ import {
   showPasskeyListOnce,
   stopShowingPasskeyList,
 } from "@/src/autofill/passkey-list.ts";
+import { SaveCardHost } from "@/src/autofill/save-card-host.ts";
 import {
   isGone,
   isUsernameInput,
@@ -61,6 +62,8 @@ export default defineContentScript({
       (above) => tellMenu({ type: "menu-placement", above }),
       () => [passkeyIcon.element],
     );
+    // the card asking to save a login (for password managers that don't ask), in the top frame only
+    const saveCard = window === window.top ? new SaveCardHost(browser.runtime.getURL("/save.html")) : undefined;
     let request = 0;
     // the field whose menu the user just dismissed; it stays closed there until they ask again
     let dismissed: HTMLInputElement | undefined;
@@ -455,6 +458,18 @@ export default defineContentScript({
     // messages relayed by the background from our menu page; only our extension can send these
     browser.runtime.onMessage.addListener((message: ContentMessage, sender, sendResponse) => {
       if (sender.id !== browser.runtime.id) return false;
+      if (message.type === "show-save-card") {
+        saveCard?.open(message.nonce);
+        return false;
+      }
+      if (message.type === "save-card-resize") {
+        saveCard?.resize(message.nonce, message.height);
+        return false;
+      }
+      if (message.type === "save-card-close") {
+        saveCard?.close(message.nonce);
+        return false;
+      }
       if (message.type === "generated-password-saved") {
         if (generated?.value === message.password) generated.saved = true;
         return false;

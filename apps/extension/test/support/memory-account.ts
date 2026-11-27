@@ -21,7 +21,12 @@ export interface MemoryLogin {
 
 export class MemoryAccount implements Account {
   readonly provider = "memory";
-  readonly capabilities: Capabilities = { oneTimeCodes: false, savePasswords: true, openApp: false };
+  readonly capabilities: Capabilities = {
+    oneTimeCodes: false,
+    savePasswords: true,
+    openApp: false,
+    asksBeforeSaving: false,
+  };
   readonly unlock: PasswordUnlock;
   readonly saved: { hostname: string; username: string; password: string }[] = [];
   #status: AccountStatus = { state: "locked" };
@@ -66,16 +71,18 @@ export class MemoryAccount implements Account {
     this.#set({ state: "locked" });
   }
 
-  async logins(hostname: string): Promise<LoginItem[]> {
+  remove?: () => Promise<void>;
+
+  async logins({ hostname }: URL): Promise<LoginItem[]> {
     this.#assertUnlocked();
     return this.vault.filter((l) => l.hostname === hostname).map(({ id, username }) => ({ id, username }));
   }
 
-  async login(hostname: string, id: string): Promise<LoginItem | undefined> {
-    return (await this.logins(hostname)).find((login) => login.id === id);
+  async login(page: URL, id: string): Promise<LoginItem | undefined> {
+    return (await this.logins(page)).find((login) => login.id === id);
   }
 
-  async credential(hostname: string, id: string, _tab: Tab): Promise<Credential | undefined> {
+  async credential({ hostname }: URL, id: string, _tab: Tab): Promise<Credential | undefined> {
     this.#assertUnlocked();
     const login = this.vault.find((l) => l.hostname === hostname && l.id === id);
     return login && { username: login.username, password: login.password };

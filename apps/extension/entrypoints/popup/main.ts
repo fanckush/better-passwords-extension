@@ -1,11 +1,12 @@
 import "./style.css";
-import type { AccountSettings, AccountView } from "@/src/accounts/types.ts";
+import type { AccountView } from "@/src/accounts/types.ts";
 import { HME_CONSENT_PORT, requestHideMyEmailConsent } from "@/src/aliases/icloud/consent.ts";
 import { DISPLAY_NAME } from "@/src/config.ts";
 import {
   type LoginsResult,
-  mainAccount,
+  type MenuMessage,
   type OneTimeCodesResult,
+  POPUP_PORT,
   type Settings,
   type Status,
   send,
@@ -13,15 +14,17 @@ import {
 import { computerName, platform } from "@/src/platform.ts";
 import { applySystemAccent } from "@/src/ui/accent.ts";
 import { bindCodeInput } from "@/src/ui/code-input.ts";
-import { companionPitch } from "@/src/ui/companion-pitch.ts";
 import { h } from "@/src/ui/h.ts";
-import { CHECK, icon, OPEN, TIMER } from "@/src/ui/icons.ts";
+import { CHECK, CHEVRON_BACK, CHEVRON_DOWN, CHEVRON_FORWARD, icon, OPEN, TIMER } from "@/src/ui/icons.ts";
+import { providerBadge, providerPicker, providerTile } from "@/src/ui/providers.ts";
 import { reportProblem } from "@/src/ui/report.ts";
-import { setupFlow } from "@/src/ui/setup.ts";
+import { appleSetupStarted, setupFlow } from "@/src/ui/setup.ts";
+import { animateSteps } from "@/src/ui/steps.ts";
 
 applySystemAccent();
 
 const app = document.getElementById("app") as HTMLElement;
+animateSteps(app);
 /** "Mac" or "PC": the computer showing Apple's code (set before the first screen). */
 let computer = "Mac";
 /** What's shown while a verification code is fetched: macOS asks for Touch ID, Windows nothing. */
@@ -40,34 +43,204 @@ async function activeTabId(): Promise<number | undefined> {
   return tab?.id;
 }
 
+/** The account the inline menu asked to unlock (it opened this popup, or this window, for it). */
+let unlockTarget = new URLSearchParams(location.search).get("unlock") ?? undefined;
+/** Opened as a small window to unlock (where the popup can't open): it closes once unlocked. */
+const unlockWindow = unlockTarget !== undefined;
+
+/** Accounts that can be used here: set up (or signed in), and not refused by the system. */
+function usable(account: AccountView): boolean {
+  return account.state !== "needs-setup" && account.state !== "unavailable";
+}
+
+/** Signed out by Bitwarden (its password changed, say): signing in again, on the setup page. */
+function signedOut(account: AccountView): boolean {
+  return account.unlock.kind === "password" && account.state === "needs-setup";
+}
+
+/** Counts renders: one overtaken by a newer one (a lock while it loaded) draws nothing. */
+let turn = 0;
+/** The accounts unlocked as the screen shows them. */
+let shownUnlocked = "";
+const unlockedIds = (accounts: AccountView[]) =>
+  accounts
+    .filter((a) => a.state === "unlocked")
+    .map((a) => a.id)
+    .join();
+
 async function refresh(error?: string) {
+  const mine = ++turn;
   let status: Status;
   try {
     status = await send({ type: "get-status" });
   } catch (e) {
     return showRetry(messageOf(e));
   }
+  if (mine !== turn) return;
+  const { accounts } = status;
+  shownUnlocked = unlockedIds(accounts);
+  // opened by the inline menu (or as a window) for one account: its unlock, open
+  const target = accounts.find((a) => a.id === unlockTarget);
+  unlockTarget = undefined;
+  if (target && target.state !== "unlocked" && usable(target)) {
+    expanded = target.id;
+    if (unlockWindow) return showUnlockWindow(status, target, error);
+  } else if (unlockWindow) {
+    return window.close();
+  }
 
-  // not set up yet, set up moments ago (the popup closes while the user does it), or set up in a
-  // browser macOS doesn't let start Apple's helper (the setup flow explains)
-  const account = mainAccount(status);
-  const settingUpNow = account.state === "needs-setup" || account.state === "unavailable";
-  if (!("unlock" in account) || settingUpNow || status.justConnected) return showSetup(status);
+  const ready = accounts.filter(usable);
+  // nothing set up yet, set up moments ago (the popup closes while the user does it), or set up in
+  // a browser macOS doesn't let start Apple's helper (the setup flow explains)
+  if (status.justConnected || (ready.length === 0 && !accounts.some(signedOut))) return showSetup(status);
+  await showHome(status, mine, error);
+}
 
-  if (account.state === "unlocked") return showLogins(status, error);
-  // each way of unlocking has its screen; so far, accounts unlock with a code shown elsewhere
-  if (account.unlock.kind !== "pairing-code") return showRetry(`${account.label} can't be unlocked here yet.`);
+// --- unlocking -----------------------------------------------------------------------------------
+// One layout whatever is locked: the site's logins (of the accounts unlocked), then a card with a
+// row per account still locked, then settings. A row opens in place to unlock (Apple's code box,
+// Bitwarden's master password); with one account locked and nothing else, it's open already.
+
+/**
+ * The account whose unlock is open, if any. Remembered for a few minutes: the popup closes when the
+ * user goes to look the master password up, and should be where they left it when they're back.
+ */
+let expanded: string | undefined;
+const EXPANDED_KEY = "popupUnlock";
+const REMEMBER_MS = 5 * 60_000;
+
+async function rememberedUnlock(): Promise<string | undefined> {
+  const stored = await browser.storage.session.get(EXPANDED_KEY).catch(() => ({}) as Record<string, unknown>);
+  const saved = stored[EXPANDED_KEY] as { account: string; at: number } | undefined;
+  return saved && Date.now() - saved.at < REMEMBER_MS ? saved.account : undefined;
+}
+
+function rememberUnlock(account: string | undefined) {
+  const change = account
+    ? browser.storage.session.set({ [EXPANDED_KEY]: { account, at: Date.now() } })
+    : browser.storage.session.remove(EXPANDED_KEY);
+  void change.catch(() => {});
+}
+
+/** Opens an account's unlock (from its row, or Accounts' Unlock button), and shows it. */
+async function openUnlock(account: string | undefined) {
+  expanded = account;
+  rememberUnlock(account);
+  await refresh();
+  if (account) app.querySelector(".unlock-area")?.scrollIntoView({ block: "nearest" });
+}
+
+/** Unlocked: nothing stays open, and the popup shows what's there now. */
+async function unlocked() {
+  expanded = undefined;
+  rememberUnlock(undefined);
+  if (unlockWindow) return window.close();
+  await refresh();
+}
+
+/** A row per account still locked (or signed out), the open one with its way to unlock. */
+function unlockArea(status: Status, locked: AccountView[]): HTMLElement | null {
+  if (locked.length === 0) return null;
+  // one row alone has nothing to switch to: it's simply open
+  const several = locked.length > 1;
+  const card = h("div", { class: "card unlock-area" });
+  for (const account of locked) {
+    const open = account.id === expanded;
+    const label = signedOut(account) ? `Sign In to ${account.label}` : `Unlock ${account.label}`;
+    const text = h(
+      "span",
+      { class: "unlock-text" },
+      h("span", { class: "unlock-name", textContent: label }),
+      account.detail ? h("span", { class: "unlock-detail", textContent: account.detail }) : null,
+    );
+    const toggles = several || !open;
+    const head = toggles
+      ? h(
+          "button",
+          { class: "unlock-row", type: "button", ariaExpanded: String(open) },
+          providerTile(account.provider),
+          text,
+          chevron(open ? CHEVRON_DOWN : CHEVRON_FORWARD),
+        )
+      : h("div", { class: "unlock-row" }, providerTile(account.provider), text);
+    head.addEventListener("click", () => {
+      if (!toggles) return;
+      if (signedOut(account)) return void openSetup(`bitwarden=${account.id}`);
+      void openUnlock(open ? undefined : account.id);
+    });
+    card.append(head);
+    if (open && !signedOut(account)) {
+      const body = h("div", { class: "unlock-body" });
+      card.append(body);
+      if (account.unlock.kind === "password") passwordUnlock(account, body);
+      else void codeUnlock(status, account, body);
+    }
+  }
+  return card;
+}
+
+function chevron(path: string) {
+  const svg = icon(path);
+  svg.classList.add("chevron");
+  return svg;
+}
+
+/** The small window Firefox opens to unlock (it can't open the popup by itself): just that. */
+function showUnlockWindow(status: Status, account: AccountView, error?: string) {
+  show(h("h1", { textContent: DISPLAY_NAME }), errorLine(error), unlockArea(status, [account]), reportProblem());
+  focusUnlock();
+}
+
+function focusUnlock() {
+  requestAnimationFrame(() => app.querySelector<HTMLInputElement>(".unlock-body input")?.focus());
+}
+
+function passwordUnlock(account: AccountView, body: HTMLElement, error?: string) {
+  const input = h("input", {
+    class: "password",
+    type: "password",
+    autocomplete: "current-password",
+    ariaLabel: "Master password",
+    placeholder: "Master password",
+    required: true,
+  });
+  const submit = h("button", { class: "primary", type: "submit", textContent: "Unlock" });
+  const form = h("form", { class: "unlock" }, input, submit);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    input.disabled = submit.disabled = true;
+    submit.textContent = "Unlocking…";
+    try {
+      await send({ type: "unlock-with-password", account: account.id, password: input.value });
+      await unlocked();
+    } catch (e) {
+      passwordUnlock(account, body, messageOf(e));
+      body.querySelector("input")?.focus();
+    }
+  });
+  const problem = errorLine(error);
+  body.replaceChildren(form, ...(problem ? [problem] : []));
+}
+
+/** Touch ID is tried once per popup: after it's dismissed, the code box. */
+let touchIdTried = false;
+
+async function codeUnlock(status: Status, account: AccountView, body: HTMLElement) {
   // locked or disconnected: start unlocking right away, saving the user a click
   const awaitingCode = account.state === "unlocking";
-  if (touchIdFor(status) && !error && !awaitingCode) return unlockWithTouchId(status);
+  if (touchIdFor(status) && !awaitingCode && !touchIdTried) {
+    touchIdTried = true;
+    return touchIdUnlock(status, body);
+  }
   // a fresh code even if one is still valid: the user may have closed Apple's window since, and
   // nothing tells us
   codeRequest = popupSettled().then(() => send({ type: "request-code", fresh: true }));
-  const input = showCodeEntry(status, error ?? (awaitingCode ? account.error : undefined));
+  const input = codeEntry(status, body, awaitingCode ? account.error : undefined);
   try {
     await codeRequest;
   } catch (e) {
-    return showRetry(error ?? messageOf(e));
+    if (body.isConnected) codeEntry(status, body, messageOf(e));
+    return;
   }
   // Apple's code window can take the keyboard as it opens (on Windows it opens slowly, and only
   // then does the helper answer), so give it back to the box, unless the user is typing already
@@ -77,10 +250,33 @@ async function refresh(error?: string) {
   }
 }
 
-/** Whether the companion app can enter the main account's code after Touch ID. */
+async function touchIdUnlock(status: Status, body: HTMLElement) {
+  body.replaceChildren(
+    h("p", { class: "hint", textContent: "Confirm with Touch ID. The code your Mac shows is entered for you." }),
+  );
+  try {
+    await send({ type: "unlock-with-touch-id" });
+    await unlocked();
+  } catch (e) {
+    // the code is on screen either way, so typing it still works
+    codeEntry(status, body, messageOf(e));
+  }
+}
+
+async function openSetup(route: string) {
+  await browser.tabs.create({ url: browser.runtime.getURL(`/setup.html#${route}`) });
+  window.close();
+}
+
+/** The account that unlocks with a code shown on the computer (Apple Passwords), if any. */
+function codeAccount(status: Status): AccountView | undefined {
+  return status.accounts.find((a) => a.unlock.kind === "pairing-code");
+}
+
+/** Whether the companion app can enter the code-unlocked account's code after Touch ID. */
 function touchIdFor(status: Status): boolean {
-  const account = mainAccount(status);
-  return "unlock" in account && account.unlock.kind === "pairing-code" && account.unlock.touchId === true;
+  const account = codeAccount(status);
+  return account?.unlock.kind === "pairing-code" && account.unlock.touchId === true;
 }
 
 /** The pending request for a code; a code typed meanwhile is checked once it's done. */
@@ -103,27 +299,60 @@ function popupSettled(): Promise<void> {
   });
 }
 
-async function unlockWithTouchId(status: Status) {
-  show(h("h1", { textContent: "Confirm with Touch ID" }), h("p", {}, "The code your Mac shows is entered for you."));
-  try {
-    await send({ type: "unlock-with-touch-id" });
-    await refresh();
-  } catch (e) {
-    // the code is on screen either way, so typing it still works
-    showCodeEntry(status, messageOf(e));
-  }
-}
-
 /** Set once this popup has shown the setup flow, so the first unlock after it says "all set". */
 let settingUp = false;
 
-async function showSetup(status: Status) {
+/** `choose`: the picker, even with Apple's setup under way (the user went back to it). */
+async function showSetup(status: Status, choose = false) {
   settingUp = true;
-  show(await setupFlow(status, { next: { label: "Continue", run: () => void refresh() } }));
+  const apple = status.accounts.find((a) => a.provider === "apple");
+  // Apple's setup under way (or done moments ago, or blocked here): its flow says where it's at
+  const appleUnderWay =
+    status.justConnected || appleSetupStarted() || (apple !== undefined && apple.state !== "needs-setup");
+  if (appleUnderWay && !choose) return showAppleSetup(status);
+  const picker = h(
+    "div",
+    { class: "setup" },
+    h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
+    h("h1", { textContent: `Welcome to ${DISPLAY_NAME}` }),
+    h("p", { class: "lead", textContent: "Which password manager do you use?" }),
+    providerPicker({
+      // signing in to Bitwarden happens in a tab: the popup closes while the user fetches a code
+      choose: (id) => (id === "apple" ? void showAppleSetup(status, true) : void openSetup("bitwarden")),
+    }),
+    reportProblem(),
+  );
+  show(picker);
+
+  // Apple connected meanwhile (the Terminal command, say), or found blocked: its flow says so
+  const timer = setInterval(async () => {
+    const latest = await send({ type: "get-status" }).catch(() => undefined);
+    if (!picker.isConnected) return clearInterval(timer);
+    const apple = latest?.accounts.find((a) => a.provider === "apple");
+    if (latest && apple && apple.state !== "needs-setup") {
+      clearInterval(timer);
+      void showAppleSetup(latest);
+    }
+  }, 1_500);
+}
+
+/** Apple's setup flow, with a way back to the picker when the user came from it. */
+async function showAppleSetup(status: Status, fromPicker = false) {
+  // removed earlier from this browser: added back, to be set up
+  if (!status.accounts.some((a) => a.provider === "apple")) {
+    status = await send({ type: "add-account", provider: "apple" });
+  }
+  const flow = await setupFlow(status, { next: { label: "Continue", run: () => void refresh() } });
+  if (!fromPicker) return show(flow);
+  const back = h("button", { class: "back", type: "button" }, icon(CHEVRON_BACK), "Back");
+  back.addEventListener("click", () => {
+    void showSetup(status, true);
+  });
+  show(back, flow);
 }
 
 function showRetry(error: string) {
-  const retry = h("button", { class: "primary", textContent: "Try again" });
+  const retry = h("button", { class: "primary", textContent: "Try Again" });
   retry.addEventListener("click", () => void refresh());
   show(
     h("h1", { textContent: DISPLAY_NAME }),
@@ -133,67 +362,58 @@ function showRetry(error: string) {
   );
 }
 
-/** Shows the box for the code and returns it. */
-function showCodeEntry(status: Status, error?: string): HTMLInputElement {
+/** The box for Apple's code, in its row's body; returns it. */
+function codeEntry(status: Status, body: HTMLElement, error?: string): HTMLInputElement {
   const input = h("input", {
     class: "code",
     inputMode: "numeric",
     autocomplete: "one-time-code",
     ariaLabel: "Verification code",
-    autofocus: true,
   });
-  const newCode = h("button", { class: "link", textContent: "Show code again" });
+  const newCode = h("button", { class: "link", type: "button", textContent: "Show Code Again" });
 
   const submit = async (code: string) => {
     input.disabled = true;
     try {
       await codeRequest.catch(() => {});
       await send({ type: "verify-code", code });
-      await refresh();
+      await unlocked();
     } catch (e) {
       // a wrong code burns the challenge, so ask the Mac for a fresh one
       await send({ type: "request-code", fresh: true }).catch(() => {});
-      showCodeEntry(status, messageOf(e));
+      codeEntry(status, body, messageOf(e)).focus();
     }
   };
 
   bindCodeInput(input, (code) => void submit(code));
   newCode.addEventListener("click", async () => {
-    await send({ type: "request-code", fresh: true }).catch((e) => showCodeEntry(status, messageOf(e)));
+    await send({ type: "request-code", fresh: true }).catch((e) => codeEntry(status, body, messageOf(e)));
     input.value = "";
     input.focus();
   });
 
   let touchId: HTMLButtonElement | null = null;
   if (touchIdFor(status)) {
-    touchId = h("button", { class: "link", textContent: "Enter it for me" });
-    touchId.addEventListener("click", () => void unlockWithTouchId(status));
+    touchId = h("button", { class: "link", type: "button", textContent: "Enter It for Me" });
+    touchId.addEventListener("click", () => void touchIdUnlock(status, body));
   }
   const companionHint =
     status.companion === "needs-setup"
       ? h("p", { class: "hint" }, "To skip typing the code, finish setting up the companion app.")
       : null;
-  const report = reportProblem();
 
-  show(
-    h("h1", { textContent: `Enter the code shown on your ${computer}` }),
-    h(
-      "p",
-      {},
-      `Your ${computer} is showing a 6-digit verification code. You only need to do this once per browser session.`,
-    ),
+  const parts: (Node | null)[] = [
+    h("p", {
+      class: "hint",
+      textContent: `Enter the code shown on your ${computer}. You do this once per browser session.`,
+    }),
     input,
     errorLine(error),
-    h("div", { class: "actions" }, newCode, touchId),
+    h("div", { class: "actions" }, newCode, touchId ?? h("span")),
     companionHint,
-    report,
-  );
-  void companionPitch(() => {
-    void send({ type: "open-companion-page" }).catch(() => {});
-    window.close();
-  }).then((pitch) => {
-    if (pitch && input.isConnected) report.before(pitch);
-  });
+  ];
+  // (the companion app's own section, right below, offers it: no second pitch here)
+  body.replaceChildren(...parts.filter((n): n is Node => n !== null));
   // Apple's code window can take focus as it appears; take it back when the popup regains it
   const refocus = () => {
     if (input.isConnected && !input.disabled) input.focus();
@@ -204,31 +424,48 @@ function showCodeEntry(status: Status, error?: string): HTMLInputElement {
   return input;
 }
 
-async function showLogins(status: Status, error?: string) {
+async function showHome(status: Status, mine: number, error?: string) {
   const tabId = await activeTabId();
+  const ready = status.accounts.filter(usable);
+  const locked = [...ready.filter((a) => a.state !== "unlocked"), ...status.accounts.filter(signedOut)];
+  const anyUnlocked = ready.some((a) => a.state === "unlocked");
+  expanded ??= await rememberedUnlock();
+  if (expanded !== undefined && !locked.some((a) => a.id === expanded)) {
+    expanded = undefined;
+    rememberUnlock(undefined);
+  }
+  // one account to unlock and nothing else (Apple Passwords, for most): open already, saving a click
+  const [only] = locked;
+  if (expanded === undefined && !anyUnlocked && locked.length === 1 && only && !signedOut(only)) expanded = only.id;
+
   let result: LoginsResult = { logins: [] };
   try {
-    if (tabId !== undefined) result = await send({ type: "list-logins", tabId });
+    if (tabId !== undefined && anyUnlocked) result = await send({ type: "list-logins", tabId });
   } catch (e) {
     error ??= messageOf(e);
   }
 
-  let body: Node;
-  if (!result.hostname) {
+  if (mine !== turn) return;
+
+  // logins from more than one account: each icon carries its account's badge
+  const from = new Set(result.logins.map((l) => l.account));
+  const sources = from.size > 1 ? new Map(ready.map((a) => [a.id, a])) : undefined;
+  let body: Node | null = null;
+  if (!anyUnlocked) {
+    // the unlock card says it all
+  } else if (!result.hostname) {
     body = h("p", {}, "Open a website to see its saved passwords.");
   } else if (result.logins.length === 0) {
-    body = h("p", {}, `No saved passwords for ${result.hostname}.`);
+    // with others locked, which were looked in
+    const searched = ready.filter((a) => a.state === "unlocked");
+    const where = locked.length > 0 && searched.length === 1 ? ` in ${searched[0]?.label}` : "";
+    body = h("p", {}, `No saved passwords for ${result.hostname}${where}.`);
   } else {
-    body = loginList(tabId as number, result.logins, result.chosen);
+    body = loginList(tabId as number, result.logins, result.chosen, sources);
   }
 
-  const openApp = h("button", { class: "link with-icon" }, icon(OPEN), "Open Passwords App");
-  openApp.addEventListener("click", async () => {
-    await send({ type: "open-passwords-app", ...(tabId === undefined ? {} : { tabId }) }).catch(() => {});
-    window.close();
-  });
-
-  const allSet = settingUp
+  const justSetUp = settingUp;
+  const allSet = justSetUp
     ? h(
         "p",
         { class: "card padded all-set" },
@@ -236,21 +473,40 @@ async function showLogins(status: Status, error?: string) {
         "You're all set. Click a login field on any website to fill a password.",
       )
     : null;
-  settingUp = false;
 
+  const hostname = result.hostname ?? (tabId === undefined ? undefined : await siteOf(tabId));
+  const codes = tabId === undefined || !result.hostname ? null : await oneTimeCodes(tabId);
+  const unconfirmed = await unconfirmedPasswords(tabId);
+  const settings = await footer(status, tabId);
+  if (mine !== turn) return;
+  if (justSetUp) settingUp = false;
   show(
-    h("h1", { textContent: result.hostname ?? DISPLAY_NAME }),
+    h("h1", { textContent: hostname ?? DISPLAY_NAME }),
     allSet,
     extensionUpdate(status.extensionUpdate),
-    tabId === undefined || !result.hostname ? null : await oneTimeCodes(tabId),
+    codes,
     body,
-    await unconfirmedPasswords(tabId),
+    unconfirmed,
     errorLine(error),
-    h("div", { class: "actions" }, openApp),
-    await footer(status),
+    // built last: an open unlock asks for a code as it's made
+    unlockArea(status, locked),
+    settings,
     reportProblem(),
   );
-  app.querySelector<HTMLInputElement>(".search")?.focus();
+  // the box to type in: the search, or the unlock that's open
+  if (expanded !== undefined) focusUnlock();
+  else app.querySelector<HTMLInputElement>(".search")?.focus();
+}
+
+/** The tab's site, for the heading while nothing is unlocked to list its logins. */
+async function siteOf(tabId: number): Promise<string | undefined> {
+  const tab = await browser.tabs.get(tabId).catch(() => undefined);
+  try {
+    const url = new URL(tab?.url ?? "");
+    return url.protocol === "https:" ? url.hostname : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** A downloaded version waits for the session to end; installing it now ends it. */
@@ -276,13 +532,19 @@ const COLLAPSED = 3;
 const SEARCH_AFTER = 10;
 
 /** `chosen`: the login picked on the sign-in's previous step (listed first), shown alone at first. */
-function loginList(tabId: number, logins: LoginsResult["logins"], chosen?: string) {
-  const items = logins.map(({ ref, username }) => {
+function loginList(tabId: number, logins: LoginsResult["logins"], chosen?: string, sources?: Map<string, AccountView>) {
+  const items = logins.map(({ ref, username, account }) => {
     const name = username || "(no username)";
+    const source = sources?.get(account);
     const button = h(
       "button",
-      { class: "login", title: `Fill ${username}` },
-      h("span", { class: "avatar", textContent: (username[0] ?? "?").toUpperCase() }),
+      { class: "login", title: source ? `Fill ${username} from ${source.label}` : `Fill ${username}` },
+      h(
+        "span",
+        { class: "avatar" },
+        (username[0] ?? "?").toUpperCase(),
+        source ? providerBadge(source.provider, source.label) : null,
+      ),
       h("span", { class: "name", textContent: name }),
     );
     button.addEventListener("click", () => void fill(tabId, ref));
@@ -517,6 +779,10 @@ async function fill(tabId: number, ref: string) {
   }
 }
 
+/** The options that are on/off switches. */
+type Toggle = Exclude<keyof Settings, "saveNewLoginsTo">;
+type AccountToggle = "lockOnScreenLock" | "touchId";
+
 type Option<K extends string> = (key: K, label: string, detail?: string, disabled?: boolean) => HTMLElement;
 
 /** A switch for a boolean setting, saved with `save` as it's flipped (false: the user backed out). */
@@ -543,19 +809,21 @@ function toggleFor<K extends string>(
   };
 }
 
-async function footer(status: Status) {
+/** `tabId`: the tab the popup is for, so an account's app opens at its site. */
+async function footer(status: Status, tabId?: number) {
   const settings: Settings = await send({ type: "get-settings" });
-  const option = toggleFor<keyof Settings>(settings, async (key, on) => {
+  const option = toggleFor<Toggle>(settings, async (key, on) => {
     if (key === "hideMyEmail" && on && !(await requestHideMyEmailConsent())) return false;
     await send({ type: "set-settings", settings: { [key]: on } });
     return true;
   });
-  // the options of the account shown (one so far)
-  const account = mainAccount(status) as AccountView;
-  const accountOption = toggleFor<keyof AccountSettings>(account.settings, (key, on) =>
-    send({ type: "set-account-settings", account: account.id, settings: { [key]: on } }),
-  );
-  const lock = h("button", { class: "secondary", textContent: "Lock" });
+  const accountOption = (account: AccountView) =>
+    toggleFor<AccountToggle>(account.settings, (key, on) =>
+      send({ type: "set-account-settings", account: account.id, settings: { [key]: on } }),
+    );
+  const apple = codeAccount(status);
+  const several = listedAccounts(status).length > 1;
+  const lock = h("button", { class: "secondary", textContent: several ? "Lock All" : "Lock" });
   lock.addEventListener("click", async () => {
     await send({ type: "lock" });
     window.close();
@@ -572,24 +840,190 @@ async function footer(status: Status) {
     option("oneTimeCodes", "Verification codes", "when a site asks for one"),
     option("generatePasswords", "When signing up", "strong passwords and emails"),
     option("hideMyEmail", "Hide My Email", "iCloud+ addresses, labeled with the site's name"),
-    // the companion app is Mac only; elsewhere there's nothing to offer
-    ...(status.companion === "unavailable" ? [] : [h("hr"), macAppSection(status, option, accountOption)]),
+    // the companion app is Mac only, and for Apple Passwords; elsewhere there's nothing to offer
+    ...(status.companion === "unavailable" || !apple || !usable(apple)
+      ? []
+      : [h("hr"), macAppSection(status, option, accountOption(apple))]),
     h("hr"),
-    // Firefox's idle API never reports "locked", so the option would do nothing there
-    h(
-      "div",
-      { class: "actions" },
-      import.meta.env.FIREFOX ? h("span") : accountOption("lockOnScreenLock", `Lock when my ${computer} locks`),
-      lock,
-    ),
+    accountsSection(status, settings, accountOption, tabId),
+    // nothing unlocked: nothing to lock
+    ...(status.accounts.some((a) => a.state === "unlocked") ? [h("hr"), h("div", { class: "actions end" }, lock)] : []),
   );
+}
+
+function openIcon() {
+  const svg = icon(OPEN);
+  svg.classList.add("open");
+  return svg;
+}
+
+/**
+ * An account's tile and name: a link to its app or web vault, at the tab's site, where it has one.
+ * (Apple's app opens at the site's entry; Bitwarden's web vault searches for the site.)
+ */
+function accountName(account: AccountView, tabId?: number): HTMLElement {
+  const content = [
+    providerTile(account.provider),
+    h("span", { class: "account-name", textContent: account.label }),
+  ] as const;
+  if (!account.capabilities.openApp || !usable(account)) return h("span", { class: "account-link" }, ...content);
+  const link = h(
+    "button",
+    { class: "account-link", title: `Open ${account.label}`, ariaLabel: `Open ${account.label}` },
+    ...content,
+    openIcon(),
+  );
+  link.addEventListener("click", async () => {
+    await send({ type: "open-passwords-app", account: account.id, ...(tabId === undefined ? {} : { tabId }) }).catch(
+      () => {},
+    );
+    window.close();
+  });
+  return link;
+}
+
+/**
+ * The accounts the popup lists: all but an Apple Passwords never set up next to others (added for
+ * every install, it's only there to be set up; "Add Account…" offers it).
+ */
+function listedAccounts(status: Status): AccountView[] {
+  const notSetUp = (a: AccountView) => a.unlock.kind !== "password" && a.state === "needs-setup";
+  const others = status.accounts.filter((a) => !notSetUp(a));
+  return others.length > 0 ? others : status.accounts;
+}
+
+/** What stands between an account and filling from it, in a few words; unlocked needs none. */
+function stateText(account: AccountView): string | undefined {
+  if (account.state === "unlocked") return undefined;
+  if (account.state === "unavailable") return "Can't be used in this browser";
+  if (account.state === "needs-setup") return account.unlock.kind === "password" ? "Signed out" : "Not set up";
+  return "Locked";
+}
+
+const LOCK_AFTER: [minutes: number, label: string][] = [
+  [0, "When the browser quits"],
+  [5, "After 5 minutes unused"],
+  [15, "After 15 minutes unused"],
+  [60, "After an hour unused"],
+];
+
+/**
+ * The accounts filled from: each with what can be done now (lock, set up, sign in) and its options,
+ * "Manage…" (adding and removing, on the setup page), and where new logins are saved when more than
+ * one account saves.
+ */
+function accountsSection(
+  status: Status,
+  settings: Settings,
+  accountOption: (account: AccountView) => Option<AccountToggle>,
+  tabId?: number,
+) {
+  const listed = listedAccounts(status);
+  const several = listed.length > 1;
+  const manage = h("button", { class: "link", textContent: "Manage…" });
+  manage.addEventListener("click", () => void openSetup("accounts"));
+  const rows = listed.map((account) => {
+    let action: HTMLButtonElement | null = null;
+    const button = (label: string, run: () => void) => {
+      action = h("button", { class: "secondary small", textContent: label });
+      action.addEventListener("click", run);
+    };
+    if (several && account.state === "unlocked") {
+      button("Lock", async () => {
+        await send({ type: "lock", account: account.id });
+        await refresh();
+      });
+    } else if (account.state === "needs-setup" || account.state === "unavailable") {
+      const route = account.unlock.kind === "password" ? `bitwarden=${account.id}` : "apple";
+      button(account.unlock.kind === "password" ? "Sign In" : "Set Up", () => void openSetup(route));
+    }
+    const options: Node[] = [];
+    // Firefox's idle API never reports "locked", so the option would do nothing there
+    if (!import.meta.env.FIREFOX && usable(account)) {
+      options.push(accountOption(account)("lockOnScreenLock", `Lock when my ${computer} locks`));
+    }
+    if (account.unlock.kind === "password" && usable(account)) options.push(lockAfterPicker(account));
+    // the state first: an email cut short says enough, a state cut short doesn't
+    const detail = [stateText(account), account.detail].filter(Boolean).join(" · ");
+    return h(
+      "div",
+      { class: "account" },
+      h(
+        "div",
+        { class: "account-head" },
+        h(
+          "span",
+          { class: "account-text" },
+          accountName(account, tabId),
+          detail ? h("span", { class: "account-detail", textContent: detail }) : null,
+        ),
+        action,
+      ),
+      ...options,
+    );
+  });
+
+  // where new logins go, when more than one account could take them
+  const savers = listed.filter((a) => a.capabilities.savePasswords && usable(a));
+  let saveTo: Node | null = null;
+  if (savers.length > 1) {
+    const select = h(
+      "select",
+      { ariaLabel: "Save new logins to" },
+      ...savers.map((a) => h("option", { value: a.id, textContent: a.detail ? `${a.label} (${a.detail})` : a.label })),
+    );
+    select.value = savers.some((a) => a.id === settings.saveNewLoginsTo)
+      ? settings.saveNewLoginsTo
+      : (savers[0]?.id ?? "");
+    select.addEventListener("change", () => {
+      void send({ type: "set-settings", settings: { saveNewLoginsTo: select.value } }).catch((e) =>
+        refresh(messageOf(e)),
+      );
+    });
+    saveTo = h(
+      "label",
+      { class: "toggle select" },
+      h("span", { class: "text", textContent: "Save new logins to" }),
+      select,
+    );
+  }
+
+  return h(
+    "section",
+    { class: "accounts" },
+    h("div", { class: "actions" }, h("h2", { textContent: "Accounts" }), manage),
+    ...rows,
+    saveTo,
+  );
+}
+
+/** When an account the extension unlocks locks by itself. */
+function lockAfterPicker(account: AccountView) {
+  const select = h(
+    "select",
+    { ariaLabel: `Lock ${account.label}` },
+    ...LOCK_AFTER.map(([minutes, label]) => h("option", { value: String(minutes), textContent: label })),
+  );
+  const current = account.settings.lockAfterMinutes;
+  if (!LOCK_AFTER.some(([minutes]) => minutes === current)) {
+    select.append(h("option", { value: String(current), textContent: `After ${current} minutes unused` }));
+  }
+  select.value = String(current);
+  select.addEventListener("change", () => {
+    void send({
+      type: "set-account-settings",
+      account: account.id,
+      settings: { lockAfterMinutes: Number(select.value) },
+    }).catch((e) => refresh(messageOf(e)));
+  });
+  return h("label", { class: "toggle select" }, h("span", { class: "text", textContent: "Lock" }), select);
 }
 
 /**
  * What the companion app adds. Without it (or before its setup is done) the options are shown, greyed
  * out, next to one button that gets it, so they're discoverable but never a switch that does nothing.
  */
-function macAppSection(status: Status, option: Option<keyof Settings>, accountOption: Option<keyof AccountSettings>) {
+function macAppSection(status: Status, option: Option<Toggle>, accountOption: Option<AccountToggle>) {
   const ready = status.companion === "ready";
   const openApp = (label: string) => {
     const button = h("button", { class: "link", textContent: label });
@@ -672,8 +1106,26 @@ function showHideMyEmailConsent() {
 async function start() {
   const intent = await send({ type: "popup-intent" }).catch(() => undefined);
   if (intent?.hideMyEmailConsent) return showHideMyEmailConsent();
+  // opened by the inline menu to unlock an account
+  if (intent?.unlock) unlockTarget = intent.unlock;
   await refresh();
 }
+
+// tells the background the popup is on screen (see POPUP_PORT)
+browser.runtime.connect({ name: POPUP_PORT });
+
+// locked or unlocked elsewhere (the computer locked, the inline menu) while the popup is open: show
+// what's there now. Only on an actual difference, and never over a password being typed.
+browser.runtime.onMessage.addListener((message: MenuMessage, sender) => {
+  if (sender.id !== browser.runtime.id || message.type !== "accounts-changed") return false;
+  if (!app.querySelector(".settings, .unlock-area")) return false;
+  void send({ type: "list-accounts" }).then((accounts) => {
+    if (unlockedIds(accounts) === shownUnlocked) return;
+    if (app.querySelector<HTMLInputElement>(".unlock-body input")?.value) return;
+    void refresh();
+  });
+  return false;
+});
 
 function messageOf(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error ?? "");

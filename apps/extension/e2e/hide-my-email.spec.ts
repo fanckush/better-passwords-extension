@@ -355,7 +355,7 @@ test("a sign-in email field with nothing saved says so on a click, as a login fi
   await page.goto(`${siteUrl.replace("localhost", "127.0.0.1")}/continue.html`);
   let menu = await emailMenu(page);
   await choose(menu, "Unlock to fill passwords");
-  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(menu.getByText("No saved passwords for 127.0.0.1.")).toBeVisible();
 
   // focus alone (autofocus, Tab): nothing on screen

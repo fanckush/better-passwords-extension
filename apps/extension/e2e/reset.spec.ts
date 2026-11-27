@@ -11,7 +11,7 @@ async function resetMenu(page: Page, siteUrl: string) {
   const menu = await menuFrame(page);
   if (await menu.getByText("Unlock to suggest a strong password").isVisible()) {
     await choose(menu, "Unlock to suggest a strong password");
-    await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+    await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   }
   await expect(menu.getByText("Strong Password")).toBeVisible();
   return menu;
@@ -52,7 +52,7 @@ test.describe("with several accounts", () => {
     await forgot.locator("#email").click();
     const forgotMenu = await menuFrame(forgot);
     await choose(forgotMenu, "Unlock to fill passwords");
-    await forgotMenu.getByLabel("Verification code").fill(PAIRING_CODE);
+    await forgotMenu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
     await choose(forgotMenu, "bob@example.com");
     await expect(forgot.locator("#email")).toHaveValue("bob@example.com");
     await forgot.close();

@@ -46,7 +46,7 @@ export interface AppleAccountDeps {
  * so there the session ends when the PC locks unless the user says otherwise.
  */
 export function appleDefaultSettings(platform: Platform): AccountSettings {
-  return { lockOnScreenLock: platform === "windows", touchId: true };
+  return { lockOnScreenLock: platform === "windows", touchId: true, lockAfterMinutes: 0 };
 }
 
 const STATES: Record<SessionState, AccountState> = {
@@ -66,7 +66,12 @@ function accountStatus({ state, error, remembered }: SessionStatus): AccountStat
 export class AppleAccount implements Account {
   readonly provider = APPLE_PROVIDER;
   readonly label = "Apple Passwords";
-  readonly capabilities: Capabilities = { oneTimeCodes: true, savePasswords: true, openApp: true };
+  readonly capabilities: Capabilities = {
+    oneTimeCodes: true,
+    savePasswords: true,
+    openApp: true,
+    asksBeforeSaving: true,
+  };
   readonly unlock: PairingCodeUnlock;
   readonly #session: Session;
   #codeListeners = new Set<() => void>();
@@ -120,17 +125,17 @@ export class AppleAccount implements Account {
     this.#session.lock();
   }
 
-  async logins(hostname: string, tab: Tab = PROBE_TAB): Promise<LoginItem[]> {
+  async logins({ hostname }: URL, tab: Tab = PROBE_TAB): Promise<LoginItem[]> {
     const client = await this.#session.unlockedClient();
     return (await client.getLogins(hostname, tab)).map(({ username }) => ({ id: username, username }));
   }
 
   /** Apple names logins by username within a site, so there's nothing to look up. */
-  async login(_hostname: string, id: string): Promise<LoginItem | undefined> {
+  async login(_page: URL, id: string): Promise<LoginItem | undefined> {
     return { id, username: id };
   }
 
-  async credential(hostname: string, id: string, tab: Tab): Promise<Credential | undefined> {
+  async credential({ hostname }: URL, id: string, tab: Tab): Promise<Credential | undefined> {
     const client = await this.#session.unlockedClient();
     return client.getPassword(hostname, id, tab);
   }
@@ -164,7 +169,7 @@ export class AppleAccount implements Account {
   /** The codes for a page, asked for a stand-in tab, like logins (see PROBE_TAB). */
   async #codes(client: ApplePasswordsClient, url: URL) {
     const windows = (await this.deps.windows?.()) ?? false;
-    const usernames = async () => (await this.logins(url.hostname)).map((login) => login.username);
+    const usernames = async () => (await this.logins(url)).map((login) => login.username);
     return findOneTimeCodes(client, [url.href], PROBE_TAB, windows, usernames);
   }
 

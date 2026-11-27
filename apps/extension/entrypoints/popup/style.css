@@ -69,6 +69,7 @@ code {
 }
 
 .avatar {
+  position: relative;
   flex: none;
   display: grid;
   place-items: center;
@@ -143,6 +144,31 @@ code {
 
 .actions.end {
   justify-content: flex-end;
+}
+
+/* back to choosing a password manager, as on the setup page */
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: -4px 0 4px -6px;
+  padding: 3px 8px 3px 3px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.back:hover {
+  background: var(--hover);
+}
+
+.back svg {
+  width: 16px;
+  height: 16px;
 }
 
 button.primary,
@@ -456,4 +482,228 @@ button.with-icon svg {
       color: var(--accent-text);
     }
   }
+}
+
+/* the accounts still locked: a row each, the open one with its code box or password below */
+.unlock-area {
+  display: grid;
+}
+
+.unlock-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+button.unlock-row {
+  cursor: pointer;
+}
+
+button.unlock-row:hover {
+  background: var(--hover);
+}
+
+.unlock-area > * + .unlock-row {
+  border-top: 1px solid var(--separator);
+}
+
+.unlock-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.unlock-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.unlock-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.unlock-row > svg.chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+.unlock-body {
+  display: grid;
+  gap: 8px;
+  padding: 2px 10px 10px;
+}
+
+.password {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.password:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* the master password and its Unlock button, on one line */
+.unlock {
+  display: flex;
+  gap: 8px;
+}
+
+.unlock .password {
+  flex: 1;
+  min-width: 0;
+}
+
+.actions.wrap {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  column-gap: 14px;
+}
+
+.other-manager {
+  text-align: center;
+}
+
+/* the accounts in settings */
+.accounts {
+  display: grid;
+  gap: 8px;
+}
+
+/* each account its own group: what it is and its state, then its options under a hairline */
+.account {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.account > .toggle:first-of-type {
+  padding-top: 6px;
+  border-top: 1px solid var(--separator);
+}
+
+.account .tile,
+.unlock-row .tile {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+}
+
+.account .tile svg,
+.unlock-row .tile svg {
+  width: 15px;
+  height: 15px;
+}
+
+.account-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-text {
+  display: grid;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.account-name {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* the tile and name: a link to the account's app or web vault, when it has one */
+.account-link {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 8px;
+  min-width: 0;
+  margin: -2px -4px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+button.account-link {
+  cursor: pointer;
+}
+
+button.account-link:hover {
+  background: var(--hover);
+}
+
+/* ↗ shows it leaves the popup, on hover */
+button.account-link > svg.open {
+  width: 12px;
+  height: 12px;
+  color: var(--text-secondary);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+button.account-link:is(:hover, :focus-visible) > svg.open {
+  opacity: 1;
+}
+
+.account-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+/* the state and email, under the name (past the tile) */
+.account-text > .account-detail {
+  padding-left: 32px;
+}
+
+button.small {
+  font-size: 11px;
+}
+
+button.secondary.small {
+  padding: 2px 8px;
+}
+
+label.toggle.select {
+  justify-content: space-between;
+}
+
+label.toggle.select select {
+  max-width: 60%;
+  padding: 2px 4px;
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
 }

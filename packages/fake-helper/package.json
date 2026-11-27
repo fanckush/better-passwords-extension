@@ -14,6 +14,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@app/protocol": "workspace:*"
+    "@app/protocol": "workspace:*",
+    "@app/otp": "workspace:*"
   }
 }

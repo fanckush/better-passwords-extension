@@ -35,7 +35,7 @@ async function unlockedMenu(page: Page): Promise<Frame> {
   // still unlocked from earlier in the test: nothing to do
   if (await menu.getByText("Unlock to suggest a strong password").isVisible()) {
     await choose(menu, "Unlock to suggest a strong password");
-    await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+    await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   }
   return menu;
 }
@@ -110,7 +110,7 @@ test("follows the first field's limits when opened on the confirmation", async (
   const menu = await menuFrame(page);
   if (await menu.getByText("Unlock to suggest a strong password").isVisible()) {
     await choose(menu, "Unlock to suggest a strong password");
-    await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+    await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   }
   await expect(menu.getByText("Suggested Password", { exact: true })).toBeVisible();
   await choose(menu, "Suggested Password");

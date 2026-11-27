@@ -25,15 +25,38 @@
       "name": "@app/extension",
       "version": "1.0.0",
       "dependencies": {
+        "@app/bitwarden": "workspace:*",
+        "@app/otp": "workspace:*",
         "@app/protocol": "workspace:*",
+        "hash-wasm": "^4.13.0",
         "tldts": "^7.5.5",
       },
       "devDependencies": {
+        "@app/fake-bitwarden": "workspace:*",
         "@app/fake-helper": "workspace:*",
         "@playwright/test": "^1.64.0",
         "happy-dom": "^21.0.1",
         "web-ext": "^10.7.0",
         "wxt": "^0.21.4",
+      },
+    },
+    "packages/bitwarden": {
+      "name": "@app/bitwarden",
+      "version": "0.0.0",
+      "dependencies": {
+        "tldts": "^7.5.5",
+      },
+      "devDependencies": {
+        "@app/fake-bitwarden": "workspace:*",
+        "@app/otp": "workspace:*",
+      },
+    },
+    "packages/fake-bitwarden": {
+      "name": "@app/fake-bitwarden",
+      "version": "0.0.0",
+      "dependencies": {
+        "@app/bitwarden": "workspace:*",
+        "@app/otp": "workspace:*",
       },
     },
     "packages/fake-helper": {
@@ -43,8 +66,13 @@
         "fake-apple-helper": "./src/main.ts",
       },
       "dependencies": {
+        "@app/otp": "workspace:*",
         "@app/protocol": "workspace:*",
       },
+    },
+    "packages/otp": {
+      "name": "@app/otp",
+      "version": "0.0.0",
     },
     "packages/protocol": {
       "name": "@app/protocol",
@@ -69,9 +97,15 @@
 
     "@aklinker1/zero-zip": ["@aklinker1/zero-zip@1.0.1", "", {}, "sha512-07a596Bd1QO0bi3tIyt2xruq6vKk7hCUt9enHBwggvipB0iiycoJ9/CqzN6UFawaKbOi6NBfMlUxUXzIOZ7Dsg=="],
 
+    "@app/bitwarden": ["@app/bitwarden@workspace:packages/bitwarden"],
+
     "@app/extension": ["@app/extension@workspace:apps/extension"],
 
+    "@app/fake-bitwarden": ["@app/fake-bitwarden@workspace:packages/fake-bitwarden"],
+
     "@app/fake-helper": ["@app/fake-helper@workspace:packages/fake-helper"],
+
+    "@app/otp": ["@app/otp@workspace:packages/otp"],
 
     "@app/protocol": ["@app/protocol@workspace:packages/protocol"],
 
@@ -666,6 +700,8 @@
     "happy-dom": ["happy-dom@21.0.1", "", { "dependencies": { "@types/node": ">=20.0.0", "@types/whatwg-mimetype": "^3.0.2", "@types/ws": "^8.18.1", "buffer-image-size": "^0.6.4", "entities": "^7.0.1", "whatwg-mimetype": "^3.0.0", "ws": "^8.21.0" } }, "sha512-pRBs/u9fhrncyByOl58DMex0R2uAj6ZPKWIjV5j5yNGZBqLw3P6BTRhlc0DD5b/Ht4/6JYTMuE2LJhUWRC6SGw=="],
 
     "has-flag": ["has-flag@4.0.0", "", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
+
+    "hash-wasm": ["hash-wasm@4.13.0", "", {}, "sha512-GrWl7wsV46fKIXQZB5ebskLZLAmKL6d9RS0fspCxDeQyjoNu1AfTJTMLPOJyfzaQm0ldFiwFN21/w+sE/kgEFQ=="],
 
     "highlight.js": ["highlight.js@10.7.3", "", {}, "sha512-tzcUFauisWKNHaRkN4Wjl/ZA07gENAjFl3J/c480dprkGTg5EQstgaNFqBfUqCq54kZRIEcreTsAgF/m2quD7A=="],
 

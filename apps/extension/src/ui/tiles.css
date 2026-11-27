@@ -1,0 +1,59 @@
+/* a provider's tile: an original glyph on its colour, the shape of a macOS app icon */
+.tile {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  color: #fff;
+  box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 12%);
+}
+
+.tile svg {
+  width: 18px;
+  height: 18px;
+}
+
+.tile.large {
+  width: 56px;
+  height: 56px;
+  border-radius: 13px;
+  box-shadow:
+    inset 0 0 0 0.5px rgb(0 0 0 / 12%),
+    0 2px 6px rgb(0 0 0 / 12%);
+}
+
+.tile.large svg {
+  width: 34px;
+  height: 34px;
+}
+
+.tile-apple {
+  background: linear-gradient(180deg, #8e8e93, #48484a);
+}
+
+.tile-bitwarden {
+  background: linear-gradient(180deg, #3b7ff0, #175ddc);
+}
+
+.tile-other {
+  background: linear-gradient(180deg, #b0b0b5, #8e8e93);
+}
+
+/* a login's source, on its icon, when logins come from more than one password manager */
+.tile.source {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 3.5px;
+  box-shadow: 0 0 0 1.5px var(--badge-ring, var(--surface));
+}
+
+.tile.source svg {
+  width: 9px;
+  height: 9px;
+  color: #fff;
+}

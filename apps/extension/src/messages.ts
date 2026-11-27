@@ -7,6 +7,36 @@ import type { FieldKind } from "./autofill/fields.ts";
 import type { CompanionState, CompanionUpdate } from "./companion.ts";
 import type { FieldRules, PasswordStyle, Strength, Suggestion } from "./passwords/generate.ts";
 
+/** The port the popup holds while it's on screen, so the background knows whether it's closed. */
+export const POPUP_PORT = "popup";
+
+export type BitwardenRegion = "us" | "eu";
+
+/** What the save card asks about: a new login, or a new password for a saved one. */
+export interface SaveCardDetails {
+  hostname: string;
+  username: string;
+  update: boolean;
+  /** The account it would be saved to. */
+  account: string;
+}
+
+export type SaveCardAnswer = "save" | "not-now" | "never";
+
+export interface BitwardenSignIn {
+  region: BitwardenRegion;
+  email: string;
+  password: string;
+  twoFactor?: { provider: number; code: string; remember?: boolean };
+  newDeviceCode?: string;
+}
+
+/** What a Bitwarden sign-in needs next: nothing (signed in, as `account`), or a code. */
+export type BitwardenSignInStep =
+  | { status: "signed-in"; account: string }
+  | { status: "two-factor"; providers: number[]; email?: string }
+  | { status: "new-device" };
+
 export type Request =
   | { type: "get-status" }
   // Unlocking an account with a code shown elsewhere (see UnlockMethod). `account`: which one; by
@@ -27,6 +57,30 @@ export type Request =
   | { type: "copy-one-time-code"; tabId: number; id: string }
   /** Locks one account, or every account. */
   | { type: "lock"; account?: string }
+  /** Unlocks an account that takes a password (see UnlockMethod). Never from the inline menu. */
+  | { type: "unlock-with-password"; account: string; password: string }
+  /**
+   * Signs in to Bitwarden: a new account, or `account` again. Answers with the next step (a code to
+   * ask for), or the account signed in. Never from the inline menu.
+   */
+  | ({ type: "bitwarden-sign-in"; account?: string } & BitwardenSignIn)
+  /** Asks Bitwarden to email a two-step login code. */
+  | { type: "bitwarden-send-email-code"; region: BitwardenRegion; email: string; password: string }
+  /** Removes an account from this browser: it's locked, and signed out if it signs in. */
+  | { type: "remove-account"; account: string }
+  // the save card (save.html), with the nonce the background gave its tab's content script
+  | { type: "save-card"; nonce: string }
+  | { type: "save-card-answer"; nonce: string; answer: SaveCardAnswer }
+  | { type: "save-card-resize"; nonce: string; height: number }
+  /** Adds an account that needs no sign-in here (Apple Passwords, removed earlier). */
+  | { type: "add-account"; provider: string }
+  /** The accounts and their states, without connecting any (the inline menu asks on every open). */
+  | { type: "list-accounts" }
+  /**
+   * From the inline menu: unlock an account that takes a password, in the popup (or a small window
+   * where the popup can't open), never in the menu on the web page.
+   */
+  | { type: "open-unlock"; account: string }
   /** Ends the session and restarts the extension, installing the version the browser downloaded. */
   | { type: "install-update" }
   | { type: "get-settings" }
@@ -80,7 +134,8 @@ export type Request =
   | { type: "menu-show-passkeys"; nonce: string }
 
   /** Opens the password manager's app (Apple's Passwords), at the tab's site when there is one. */
-  | { type: "open-passwords-app"; tabId?: number }
+  /** Opens an account's app or web vault (`account`; by default the first with one), at the tab's site. */
+  | { type: "open-passwords-app"; tabId?: number; account?: string }
   // content script → background (the only requests content scripts may send)
   /** `unsure`: a password field that may be a sign-up's (see isUnsurePasswordField). */
   /** `signIn`: an email field that may sign in (see maySignIn), which lists the site's logins. */
@@ -129,6 +184,8 @@ export interface Settings {
    * it (see passkey-list.ts). Takes effect on the next page load.
    */
   hidePasskeyList: boolean;
+  /** The account new logins are saved to (its id); empty: the first unlocked account that saves. */
+  saveNewLoginsTo: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -141,6 +198,7 @@ export const DEFAULT_SETTINGS: Settings = {
   suggestEmails: true,
   companionCodeHint: true,
   hidePasskeyList: true,
+  saveNewLoginsTo: "",
 };
 
 /** Settings keys kept per account now, which older versions kept in Settings (see AccountsStore.legacy). */
@@ -163,11 +221,11 @@ export interface Status {
 }
 
 /**
- * The account the popup and setup flow are about. There is one so far; with several, they'll show
- * each. None (the background didn't answer) reads as "not set up".
+ * The account Apple's setup flow is about: the one set up on the computer, which unlocks with a code
+ * it shows (whatever was added before it). None (removed, or no answer) reads as "not set up".
  */
-export function mainAccount(status: Status | undefined): AccountView | { state: "needs-setup"; error?: string } {
-  return status?.accounts[0] ?? { state: "needs-setup" };
+export function appleAccount(status: Status | undefined): AccountView | { state: "needs-setup"; error?: string } {
+  return status?.accounts.find((a) => a.unlock.kind === "pairing-code") ?? { state: "needs-setup" };
 }
 
 export interface LoginsResult {
@@ -278,7 +336,16 @@ interface Responses {
   "email-suggestions": EmailSuggestions;
   /** `asking`: the popup (or, if it can't open, a small window) asks for Firefox's permission. */
   "enable-hide-my-email": EmailSuggestions | { asking: true };
-  "popup-intent": { hideMyEmailConsent: boolean };
+  /** `unlock`: the account the inline menu asked to unlock, which the popup opens to. */
+  "popup-intent": { hideMyEmailConsent: boolean; unlock?: string };
+  "bitwarden-sign-in": BitwardenSignInStep;
+  "bitwarden-send-email-code": null;
+  "add-account": Status;
+  "list-accounts": AccountView[];
+  "open-unlock": null;
+  "save-card": SaveCardDetails;
+  "save-card-answer": { saved: boolean };
+  "save-card-resize": null;
   "dismiss-hide-my-email-hint": null;
   "generate-hide-my-email": { address: string };
   "use-hide-my-email": { result: string };
@@ -329,7 +396,11 @@ export type ContentMessage =
   /** Shows the browser's passkey list once on the field the menu is on (see passkey-list.ts). */
   | { type: "menu-show-passkeys"; nonce: string }
   /** Whether the sign-in with the login sent in this tab went through. Answered with a SignInState. */
-  | { type: "sign-in-state" };
+  | { type: "sign-in-state" }
+  /** Shows the card asking to save a login (top frame only; see SaveCardHost). */
+  | { type: "show-save-card"; nonce: string }
+  | { type: "save-card-resize"; nonce: string; height: number }
+  | { type: "save-card-close"; nonce: string };
 
 /**
  * "moved-on": the sign-in went through; "watching": the login's field is still shown, so the page
@@ -366,6 +437,8 @@ export type MenuMessage =
   | { type: "accounts-changed"; unlocked: boolean }
   /** Sent by the background when an account has a new verification code: list them again. */
   | { type: "one-time-codes-changed" }
+  /** An account's logins changed by themselves (synced from elsewhere): list them again. */
+  | { type: "logins-changed" }
   /** Sent by the background to the menu that asked to turn Hide My Email on: it was, or the user said no. */
   | { type: "hide-my-email-changed" };
 

@@ -4,12 +4,13 @@
   box-sizing: border-box;
 }
 
+/* the card's top stays put from step to step: it grows and shrinks at the bottom only */
 body {
   margin: 0;
   min-height: 100vh;
   display: grid;
-  place-items: center;
-  padding: 32px 16px;
+  place-items: start center;
+  padding: max(32px, 12vh) 16px 32px;
   background: var(--bg);
   color: var(--text);
   font: 14px / 1.5 var(--font);
@@ -17,6 +18,7 @@ body {
 
 main {
   width: min(420px, 100%);
+  overflow: hidden;
   padding: 32px;
   border-radius: 16px;
   background: var(--surface);
@@ -35,6 +37,11 @@ main .setup .app-icon {
   height: 72px;
 }
 
+main .setup .provider {
+  --row-padding: 14px;
+  padding-block: 12px;
+}
+
 main .setup h1 {
   font-size: 22px;
 }
@@ -45,4 +52,144 @@ main .command {
 
 main .setup .button {
   padding: 9px 16px;
+}
+
+/* back to choosing a password manager: the same button, in the same place, for every one */
+main {
+  position: relative;
+}
+
+main:has(> .back) {
+  padding-top: 52px;
+}
+
+main > .back {
+  position: absolute;
+  top: 14px;
+  left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px 4px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+main > .back:hover {
+  background: var(--bg);
+}
+
+main > .back svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* once set up (the flows show a check badge), there's nothing to go back to */
+main:has(.badge) > .back {
+  display: none;
+}
+
+main:has(.badge) {
+  padding-top: 32px;
+}
+
+/* the accounts, in the same grouped list as those to add */
+main .setup h2 {
+  justify-self: start;
+  margin: 4px 0 -10px 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.managed {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 14px;
+}
+
+.managed + .managed::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 54px;
+  border-top: 1px solid var(--separator);
+}
+
+.managed .provider-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+
+.managed .name {
+  font-weight: 500;
+}
+
+.managed .provider-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.managed .row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.managed .check {
+  display: grid;
+  color: var(--success);
+}
+
+.managed .check svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* removing stays in the background until asked for */
+.managed .quiet {
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.managed .quiet:hover,
+.managed .quiet:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.managed .quiet.accent {
+  color: var(--accent);
+}
+
+.managed .quiet.danger {
+  color: var(--danger);
+}
+
+/* the one just added, tinted for a moment */
+.managed.added {
+  animation: added 2s ease-out;
+}
+
+@keyframes added {
+  from {
+    background: color-mix(in srgb, var(--success) 22%, transparent);
+  }
 }

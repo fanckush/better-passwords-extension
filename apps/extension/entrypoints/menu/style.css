@@ -45,6 +45,16 @@ body {
   flex-direction: column-reverse;
 }
 
+/* a footer reaches the edge itself: space under it would show the list scrolling past */
+.panel:has(.menu-footer) {
+  padding-bottom: 0;
+}
+
+.above .panel:has(.menu-footer) {
+  padding-top: 0;
+  padding-bottom: 5px;
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -84,6 +94,47 @@ body {
   padding-left: 35px;
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+/* a login's initial with the badge of the account it's from, as in the popup */
+.avatar {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.row:is(:hover, :focus-visible) .avatar {
+  --badge-ring: var(--accent);
+  background: var(--accent-text);
+  color: var(--accent);
+}
+
+/* below a long list, in view: pinned to the bottom (to the top, above its field) */
+.menu-footer {
+  position: sticky;
+  z-index: 1;
+  bottom: 0;
+  display: grid;
+  gap: 1px;
+  margin: 0 -5px;
+  padding: 0 5px 5px;
+  background: var(--surface);
+}
+
+.above .menu-footer {
+  top: 0;
+  bottom: auto;
+  display: flex;
+  flex-direction: column-reverse;
+  margin: 0 -5px;
+  padding: 5px 5px 0;
 }
 
 .separator {
@@ -217,7 +268,7 @@ body {
   }
 }
 
-/* a quiet text button, e.g. "Show code again" under the code box */
+/* a quiet text button, e.g. "Show Code Again" under the code box */
 .link {
   justify-self: center;
   margin: 0 0 4px;

@@ -7,8 +7,8 @@ async function typeLogin(page: Page, username: string, password: string, unlock 
   if (unlock) {
     const menu = await menuFrame(page);
     await choose(menu, "Unlock to fill passwords");
-    await menu.getByLabel("Verification code").fill(PAIRING_CODE);
-    await expect(menu.getByText("Open Passwords App")).toBeVisible();
+    await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
+    await expect(menu.getByText("Open Apple Passwords")).toBeVisible();
   }
   await page.locator("#user").fill(username);
   await page.locator("#pass").fill(password);
@@ -93,7 +93,7 @@ test.describe("doesn't save it", () => {
       await page.locator("#pass").click();
       const menu = await menuFrame(page);
       await choose(menu, "Unlock to fill passwords");
-      await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+      await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
       await choose(menu, "saved@example.com");
       await expect(page.locator("#pass")).toHaveValue("saved-pass");
       await signIn(page);

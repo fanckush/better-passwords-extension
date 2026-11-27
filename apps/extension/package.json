@@ -17,10 +17,14 @@
     "lint:firefox": "web-ext lint --source-dir .output/firefox-mv2 --warnings-as-errors"
   },
   "dependencies": {
+    "@app/bitwarden": "workspace:*",
+    "@app/otp": "workspace:*",
     "@app/protocol": "workspace:*",
+    "hash-wasm": "^4.13.0",
     "tldts": "^7.5.5"
   },
   "devDependencies": {
+    "@app/fake-bitwarden": "workspace:*",
     "@app/fake-helper": "workspace:*",
     "@playwright/test": "^1.64.0",
     "happy-dom": "^21.0.1",

@@ -14,6 +14,7 @@ test("the popup welcomes, notices the setup, and moves on to the code", async ({
   await expect(popup.getByRole("heading", { name: "Welcome to Better Passwords" })).toBeVisible();
   // "not set up" is the normal first state, not an error
   await expect(popup.getByText(/native messaging host/i)).toHaveCount(0);
+  await popup.getByRole("button", { name: /^Apple Passwords/ }).click();
 
   // one route at a time: the Terminal one replaces the app's
   await popup.getByRole("button", { name: "Rather not install an app?" }).click();
@@ -23,15 +24,16 @@ test("the popup welcomes, notices the setup, and moves on to the code", async ({
   await expect(popup.getByText("Waiting for the connection…")).toBeVisible();
 
   runSetup();
-  await expect(popup.getByRole("heading", { name: "You're connected" })).toBeVisible();
+  await expect(popup.getByRole("heading", { name: "You're Connected" })).toBeVisible();
   await popup.getByRole("button", { name: "Continue" }).click();
-  await popup.getByLabel("Verification code").fill(PAIRING_CODE);
+  await popup.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await expect(popup.getByText("You're all set.")).toBeVisible();
 });
 
 test("a popup reopened after setup says it worked, once", async ({ context, popupUrl, runSetup }) => {
   const popup = await context.newPage();
   await popup.goto(popupUrl);
+  await popup.getByRole("button", { name: /^Apple Passwords/ }).click();
   await popup.getByRole("button", { name: "Rather not install an app?" }).click();
   await popup.getByRole("button", { name: "Copy Terminal Command" }).click();
   // the popup closes while the user is in Terminal
@@ -40,7 +42,7 @@ test("a popup reopened after setup says it worked, once", async ({ context, popu
 
   const again = await context.newPage();
   await again.goto(popupUrl);
-  await expect(again.getByRole("heading", { name: "You're connected" })).toBeVisible();
+  await expect(again.getByRole("heading", { name: "You're Connected" })).toBeVisible();
   await expect(async () => {
     await again.reload();
     await expect(again.getByText("Enter the code shown on your Mac")).toBeVisible({ timeout: 1_000 });
@@ -64,13 +66,14 @@ test("the setup page follows along until unlocked", async ({ context, popupUrl, 
   await expect(setup.getByRole("heading", { name: "Welcome to Better Passwords" })).toBeVisible();
 
   runSetup();
-  await expect(setup.getByRole("heading", { name: "You're connected" })).toBeVisible();
+  await expect(setup.getByRole("heading", { name: "You're Connected" })).toBeVisible();
 
   // the page has said it worked, so the popup goes straight to the code
   const popup = await context.newPage();
   await popup.goto(popupUrl);
-  await popup.getByLabel("Verification code").fill(PAIRING_CODE);
-  await expect(setup.getByRole("heading", { name: "You're all set" })).toBeVisible();
+  await popup.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
+  await expect(setup.getByRole("heading", { name: "Password Managers" })).toBeVisible();
+  await expect(setup.getByText("Apple Passwords is ready.")).toBeVisible();
 });
 
 test("a fresh install opens the setup page", async ({ context }) => {
