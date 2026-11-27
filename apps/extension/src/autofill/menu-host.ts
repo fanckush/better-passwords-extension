@@ -74,7 +74,16 @@ export class MenuHost {
   #above = false;
   /** What the menu page was last told of that (see onPlacement); it can't hear before it has loaded. */
   #toldAbove: boolean | undefined;
-  readonly #watch = new VisibilityWatch(() => isMenuGenuinelyVisible(this.#host));
+  readonly #watch = new VisibilityWatch(
+    () => isMenuGenuinelyVisible(this.#host),
+    undefined,
+    undefined,
+    // where it is, to the pixel: a menu that moves (one following a jumping field) waits again
+    () => {
+      const { left, top } = this.#host.getBoundingClientRect();
+      return `${Math.round(left)},${Math.round(top)}`;
+    },
+  );
   /** The pending frame of the loop that keeps the menu on its field (see #follow). */
   #followFrame: number | undefined;
   /** Where the field and viewport were when the menu was last placed. */

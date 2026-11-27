@@ -47,6 +47,39 @@ test.describe("isMenuGenuinelyVisible", () => {
     });
   }
 
+  // DOM-based extension clickjacking (Tóth, 2025) and its variants: ways a page can make the menu
+  // invisible while it still takes clicks, on the menu's own element or on the page root
+  for (const [name, css] of [
+    ["opacity", "opacity: 0"],
+    ["a mask", "mask-image: linear-gradient(transparent, transparent)"],
+    ["a prefixed mask", "-webkit-mask-image: linear-gradient(transparent, transparent)"],
+    ["visibility: collapse", "visibility: collapse"],
+    ["content-visibility: hidden", "content-visibility: hidden"],
+    ["an opacity filter", "filter: opacity(0)"],
+  ]) {
+    test(`rejects ${name} on the menu itself`, async ({ page }) => {
+      await page.evaluate((style) => {
+        (window as unknown as { host: HTMLElement }).host.style.cssText += `;${style}`;
+      }, css as string);
+      expect(await check(page)).toBe(false);
+    });
+  }
+
+  test("rejects a legacy clip on the menu", async ({ page }) => {
+    await page.evaluate(() => {
+      const { host } = window as unknown as { host: HTMLElement };
+      host.style.cssText += ";clip: rect(0 0 0 0)";
+    });
+    expect(await check(page)).toBe(false);
+  });
+
+  test("rejects a mask on the page root", async ({ page }) => {
+    await page.evaluate(() =>
+      document.documentElement.setAttribute("style", "mask-image: linear-gradient(transparent, transparent)"),
+    );
+    expect(await check(page)).toBe(false);
+  });
+
   test("rejects another top-layer element opened above the menu", async ({ page }) => {
     await page.evaluate(() => {
       const cover = document.createElement("div");

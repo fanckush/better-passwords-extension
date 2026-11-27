@@ -4,15 +4,26 @@
 
 const MIN_OPACITY = 0.99;
 
+/**
+ * Properties that hide an element's content while it still takes clicks. Masks matter most: they
+ * hide the menu completely, and Chromium's IntersectionObserver v2 doesn't treat them as hiding it
+ * (DOM-based extension clickjacking, Tóth 2025, with mask instead of opacity).
+ */
+const HIDING_IMAGES = ["mask-image", "-webkit-mask-image", "-webkit-mask-box-image-source", "mask-border-source"];
+
 function styleHidesContent(style: CSSStyleDeclaration): boolean {
   const opacity = Number.parseFloat(style.opacity);
+  const set = (property: string) => !["", "none"].includes(style.getPropertyValue(property));
   return (
     style.display === "none" ||
     style.visibility === "hidden" ||
+    style.visibility === "collapse" ||
+    style.getPropertyValue("content-visibility") === "hidden" ||
     opacity < MIN_OPACITY ||
     (style.filter !== "" && style.filter !== "none") ||
     (style.clipPath !== "" && style.clipPath !== "none") ||
-    (style.mixBlendMode !== "" && style.mixBlendMode !== "normal")
+    (style.mixBlendMode !== "" && style.mixBlendMode !== "normal") ||
+    HIDING_IMAGES.some(set)
   );
 }
 
@@ -31,8 +42,9 @@ export function isMenuGenuinelyVisible(host: HTMLElement, view: Window = window)
   }
 
   // The menu lives in the top layer, so normal page content can't cover it. Anything else the page
-  // put in the top layer after us could, so refuse while any other popover or modal is open.
-  const others = view.document.querySelectorAll(":popover-open, :modal");
+  // put in the top layer after us could, so refuse while any other popover, modal or fullscreen
+  // element is open (a fullscreen element with pointer-events: none would cover it unseen).
+  const others = view.document.querySelectorAll(":popover-open, :modal, :fullscreen");
   if (Array.from(others).some((el) => el !== host)) return false;
 
   // Hit-test the corners and centre. This catches covering elements that take clicks; overlays
@@ -56,19 +68,26 @@ export function isMenuGenuinelyVisible(host: HTMLElement, view: Window = window)
  * menu to have stayed visible for a while beforehand defeats that: a menu hidden until the click
  * never qualifies. Chromium's IntersectionObserver v2 does the same inside the menu page; this
  * covers browsers without it (Firefox).
+ *
+ * A move starts the wait again too: a page can move the field around so that the menu, which
+ * follows it, jumps under the pointer and catches a click meant for something else (mouse-following).
  */
 export class VisibilityWatch {
   #visibleSince: number | undefined;
+  #where: string | undefined;
   #running = false;
 
   constructor(
     private readonly isVisible: () => boolean,
     private readonly now: () => number = () => performance.now(),
     private readonly nextFrame: (callback: () => void) => void = (callback) => requestAnimationFrame(callback),
+    /** Where the menu is on screen, in any form that changes when it moves. */
+    private readonly where: () => string = () => "",
   ) {}
 
   start(): void {
     this.#visibleSince = undefined;
+    this.#where = undefined;
     if (this.#running) return;
     this.#running = true;
     const tick = () => {
@@ -92,7 +111,11 @@ export class VisibilityWatch {
   }
 
   #sample(): void {
+    const where = this.where();
+    const moved = this.#where !== undefined && where !== this.#where;
+    this.#where = where;
     if (!this.isVisible()) this.#visibleSince = undefined;
+    else if (moved) this.#visibleSince = this.now();
     else this.#visibleSince ??= this.now();
   }
 }

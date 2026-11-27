@@ -3,7 +3,7 @@ import { VisibilityWatch } from "../src/autofill/visibility.ts";
 
 /** A watch driven by hand: `frame()` runs one animation frame, `at` is the clock. */
 function watch() {
-  const clock = { at: 0, visible: true };
+  const clock = { at: 0, visible: true, where: "0,0" };
   let pending: (() => void) | undefined;
   const w = new VisibilityWatch(
     () => clock.visible,
@@ -11,6 +11,7 @@ function watch() {
     (callback) => {
       pending = callback;
     },
+    () => clock.where,
   );
   const frame = (ms = 16) => {
     clock.at += ms;
@@ -51,6 +52,20 @@ describe("VisibilityWatch", () => {
     clock.visible = true;
     for (let i = 0; i < 5; i++) frame();
     expect(w.steadilyVisible(300)).toBe(false);
+  });
+
+  it("restarts the clock whenever the menu moves (a menu made to follow the pointer)", () => {
+    const { w, clock, frame } = watch();
+    w.start();
+    for (let i = 0; i < 40; i++) {
+      // the page moves the field every few frames, and the menu follows it
+      if (i % 6 === 0) clock.where = `${i},0`;
+      frame();
+    }
+    expect(w.steadilyVisible(300)).toBe(false);
+    // once it stays put, it's trusted again after the wait
+    for (let i = 0; i < 20; i++) frame();
+    expect(w.steadilyVisible(300)).toBe(true);
   });
 
   it("trusts nothing once stopped", () => {
