@@ -197,6 +197,13 @@ export default defineContentScript({
       return true;
     }
 
+    /** The field a press on `target` is for: the field itself, or the one its label is for. */
+    function fieldPressed(target: EventTarget | null): HTMLInputElement | undefined {
+      if (target instanceof HTMLInputElement) return target;
+      const control = target instanceof Element ? target.closest("label")?.control : undefined;
+      return control instanceof HTMLInputElement ? control : undefined;
+    }
+
     ctx.addEventListener(
       document,
       "focusin",
@@ -259,13 +266,17 @@ export default defineContentScript({
           offerFor(field);
           return;
         }
-        if (menu.isOpen && event.target !== menu.element && event.target !== menu.anchor) menu.close();
+        // a click on the field's label is one on the field: the menu stays (the browser takes focus
+        // off the field and gives it back, which the menu, still on that field, rides out)
+        const field = fieldPressed(target);
+        const clicked = field ?? target;
+        if (menu.isOpen && clicked !== menu.element && clicked !== menu.anchor) menu.close();
         // clicking the field while nothing typed matches brings every login back
-        if (menu.isOpen && !menu.isShowing && event.target === menu.anchor) filterMenu("");
+        if (menu.isOpen && !menu.isShowing && clicked === menu.anchor) filterMenu("");
         // clicking a field whose menu was dismissed asks for it again
-        if (event.target === dismissed || dismissedCode.has(event.target as HTMLInputElement)) {
+        if (field && (field === dismissed || dismissedCode.has(field))) {
           dismiss(undefined);
-          offerFor(event.target);
+          offerFor(field);
         }
       },
       { capture: true },

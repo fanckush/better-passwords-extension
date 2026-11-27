@@ -70,6 +70,24 @@ test("a site without saved logins says so on every focus, not only after unlocki
   await expect(menu.getByText("No saved passwords for 127.0.0.1.")).toBeVisible();
 });
 
+test("clicking the field's label keeps its menu open", async ({ context, siteUrl }) => {
+  const page = await context.newPage();
+  await page.goto(`${siteUrl}/login.html`);
+  await page.locator("#pass").click();
+  const menu = await menuFrame(page);
+  await choose(menu, "Unlock to fill passwords");
+  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await expect(menu.getByText("e2e-user")).toBeVisible();
+
+  await page.locator("label", { hasText: "Password" }).click({ position: { x: 5, y: 5 } });
+  await page.waitForTimeout(500);
+  // the same menu, not one closed and opened again
+  await expect(page.locator("#pass")).toBeFocused();
+  expect(menu.isDetached()).toBe(false);
+  expect(page.frames().filter((f) => f.url().includes("/menu.html#"))).toEqual([menu]);
+  await expect(menu.getByText("e2e-user")).toBeVisible();
+});
+
 test("arrow keys move between the field and the menu", async ({ context, siteUrl }) => {
   const page = await context.newPage();
   await page.goto(`${siteUrl}/login.html`);
