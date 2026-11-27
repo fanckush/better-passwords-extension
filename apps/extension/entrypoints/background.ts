@@ -1,21 +1,24 @@
-import type { ApplePasswordsClient, OneTimeCode } from "@app/protocol";
 import type { ScriptPublicPath } from "wxt/utils/inject-script";
+import { appleDefaultSettings } from "@/src/accounts/apple/account.ts";
+import { createAppleAccount } from "@/src/accounts/apple/index.ts";
+import { Accounts, type AccountsStore, type StoredAccount } from "@/src/accounts/registry.ts";
+import type { Account, AccountSettings, AccountState } from "@/src/accounts/types.ts";
+import { HME_CONSENT_PORT, hasHideMyEmailConsent } from "@/src/aliases/icloud/consent.ts";
+import { ICloudAliases } from "@/src/aliases/icloud/provider.ts";
 import type { FieldKind } from "@/src/autofill/fields.ts";
 import { Companion } from "@/src/companion.ts";
-import { BRIDGE_HOST } from "@/src/config.ts";
 import { fillCredentials } from "@/src/fill.ts";
-import { HME_CONSENT_PORT, hasHideMyEmailConsent } from "@/src/icloud/consent.ts";
-import { HEADER_RULE_ID, HideMyEmail, headerRule, ICloudError } from "@/src/icloud/hide-my-email.ts";
 import {
   type AutofillStatus,
   CONTENT_SCRIPT_REQUESTS,
   type ContactEmailsState,
   type ContentMessage,
-  defaultSettings,
+  DEFAULT_SETTINGS,
   type EmailSuggestions,
   type Envelope,
   type GeneratedPasswords,
   type HideMyEmailState,
+  LEGACY_ACCOUNT_SETTINGS,
   type MenuMessage,
   type NewPasswordContext,
   type NewPasswordResult,
@@ -25,32 +28,27 @@ import {
   type SignInState,
   type Status,
 } from "@/src/messages.ts";
-import { PortTransport } from "@/src/native/port-transport.ts";
 import {
   allowsSpecialCharacters,
   generatePassword,
   PasswordRulesError,
   type Suggestion,
 } from "@/src/passwords/generate.ts";
-import { findOneTimeCodes, oneTimeCodeId, oneTimeCodeViews } from "@/src/passwords/one-time-codes.ts";
+import { oneTimeCodeViews } from "@/src/passwords/one-time-codes.ts";
 import { withSiteRules } from "@/src/passwords/site-rules.ts";
 import { waitForLogin } from "@/src/passwords/wait-for-login.ts";
 import { platform } from "@/src/platform.ts";
 import { isSameSiteFrame } from "@/src/same-site-frame.ts";
-import { Session } from "@/src/session/session.ts";
 import { toolbarAction } from "@/src/toolbar.ts";
 import { PendingUpdate } from "@/src/updates.ts";
 import { fillableUrl, frameOriginToFill, sameFillableOrigin } from "@/src/url-policy.ts";
 
 const KEEP_ALIVE = "keep-alive";
 
-/**
- * A tab id for our own lookups. Around a save the helper sends the real tab unrequested updates
- * that list no logins; replies echo the tab id, so these can't be mistaken for ours.
- */
-const PROBE_TAB = { tabId: 2 ** 31 - 1, frameId: 0 };
+/** The one account so far, created for every install (see Accounts). */
+const APPLE_ACCOUNT = "apple";
 
-/** A generated password filled into a tab, until Apple Passwords has it. */
+/** A generated password filled into a tab, until the password manager has it. */
 interface GeneratedLogin {
   hostname: string;
   password: string;
@@ -62,7 +60,7 @@ interface GeneratedLogin {
   username?: string;
   /** The username in the form, as the user types it. */
   formUsername: string;
-  /** Whether Apple Passwords was asked already: once per generated password. */
+  /** Whether the password manager was asked already: once per generated password. */
   asked: boolean;
   /** The frame it was filled in. */
   frameId: number;
@@ -72,7 +70,7 @@ interface GeneratedLogin {
 interface SentLogin {
   hostname: string;
   password: string;
-  /** The account to save it as: its spelling in Apple Passwords if saved there; undefined when unknown. */
+  /** The account to save it as: its spelling in the password manager if saved there; undefined when unknown. */
   saveAs: Promise<string | undefined>;
   /** The page is being asked whether the sign-in went through (the field went away while the tab navigated). */
   checking: boolean;
@@ -91,99 +89,77 @@ const SENT_LOGIN_MS = 60_000;
 const signInFrames = new Map<number, URL>();
 
 export default defineBackground(() => {
-  // macOS kills Apple's helper in browsers Apple doesn't allow, and every try leaves a crash report
-  // on the Mac. So a blocked browser tries once per launch, plus whenever the user asks (the session
-  // refuses otherwise). Workers restart often, so it's remembered for the browser session.
-  const HELPER_BLOCKED = "helperBlocked";
-  const session = new Session({
-    openTransport: () => new PortTransport(BRIDGE_HOST),
-    browserName: import.meta.env.FIREFOX ? "Firefox" : "Chrome",
-    blockedEarlier: async () => {
-      const stored = (await browser.storage.session.get(HELPER_BLOCKED))[HELPER_BLOCKED];
-      return typeof stored === "string" ? stored : undefined;
-    },
-  });
   // the companion app is Mac only; elsewhere it's never asked, nor offered
   const companion = new Companion(undefined, undefined, async () => (await platform()) === "mac");
 
+  const accounts = new Accounts(
+    [
+      {
+        account: createAppleAccount(APPLE_ACCOUNT, companion),
+        defaults: async () => appleDefaultSettings(await platform()),
+      },
+    ],
+    accountsStore(),
+  );
+  // moves options kept from before accounts existed to the account now, before anything changes them
+  void accounts.views().catch(() => {});
+
   // An open native port keeps the worker alive in Chrome 105+; the alarm is a fallback that
   // wakes it if the browser suspends it anyway. Nothing to do on wake: state lives in memory.
-  session.onChange(({ state }) => {
-    if (state === "unlocked") void browser.alarms.create(KEEP_ALIVE, { periodInMinutes: 0.5 });
-    else if (state === "closed" || state === "disconnected") void browser.alarms.clear(KEEP_ALIVE);
+  accounts.onChange(() => {
+    if (accounts.anyUnlocked) void browser.alarms.create(KEEP_ALIVE, { periodInMinutes: 0.5 });
+    else if (!accounts.busy) void browser.alarms.clear(KEEP_ALIVE);
   });
   browser.alarms.onAlarm.addListener(() => {});
 
-  // Open menus asked before an unlock (or a lock) elsewhere, e.g. the code typed into the popup:
-  // tell them, so they show what they would now
-  let unlocked = false;
-  session.onChange(({ state }) => {
-    if ((state === "unlocked") === unlocked) return;
-    unlocked = state === "unlocked";
-    tellMenus({ type: "session-changed", unlocked });
+  // An account unlocked or locked. Locking forgets every generated and sent password, like the
+  // session key. Open menus asked before an unlock (or a lock) elsewhere, e.g. the code typed into
+  // the popup: tell them, so they show what they would now.
+  const unlockedAccounts = new Set<string>();
+  accounts.onChange((account, { state }) => {
+    if (state !== "unlocked") forgetPasswords();
+    if ((state === "unlocked") === unlockedAccounts.has(account.id)) return;
+    if (state === "unlocked") unlockedAccounts.add(account.id);
+    else unlockedAccounts.delete(account.id);
+    tellMenus({ type: "accounts-changed", unlocked: accounts.anyUnlocked });
   });
 
   // A new verification code (one that just arrived by SMS, say): open menus and the popup list again
-  const announcing = new WeakSet<object>();
-  session.onChange(async ({ state }) => {
-    if (state !== "unlocked") return;
-    const client = await session.unlockedClient().catch(() => undefined);
-    if (!client || announcing.has(client)) return;
-    announcing.add(client);
-    client.onOneTimeCodeAvailable(() => {
-      tellMenus({ type: "one-time-codes-changed" });
-    });
-  });
+  accounts.onOneTimeCodesChanged(() => tellMenus({ type: "one-time-codes-changed" }));
 
-  // Remembered while this browser can't reach Apple's helper, so the first connection after setup
-  // is announced once (by the popup or the setup page), even if the popup closed in between.
+  // Remembered while this browser can't reach an account, so the first connection after setup is
+  // announced once (by the popup or the setup page), even if the popup closed in between.
   const SETUP_PENDING = "setupPending";
-  session.onChange(({ state }) => {
-    if (state === "no-helper") void browser.storage.local.set({ [SETUP_PENDING]: true });
+  accounts.onChange((_, { state }) => {
+    if (state === "needs-setup") void browser.storage.local.set({ [SETUP_PENDING]: true });
     else if (state === "unlocked") void browser.storage.local.remove(SETUP_PENDING);
   });
 
-  // Told the Mac app this browser is blocked, so it hears once it isn't any more.
-  const REPORTED_BLOCKED = "reportedBlocked";
+  // An account that can't be used in this browser (for Apple, macOS blocks its helper here) marks
+  // the toolbar button; the popup explains
   const action = toolbarAction();
-  let blocked = false;
-  session.onChange(({ state, error, remembered }) => {
-    if (state === "blocked") {
-      blocked = true;
-      void browser.storage.session.set({ [HELPER_BLOCKED]: error ?? "" }).catch(() => {});
-      void action?.setBadgeText({ text: "!" });
-      void action?.setBadgeBackgroundColor({ color: "#e8a33d" });
-      // a worker that restored it has nothing new to tell
-      if (remembered) return;
-      void companion.reportHelper(true);
-      void browser.storage.local.set({ [REPORTED_BLOCKED]: true });
-      return;
-    }
-    // anything else, even a retry that timed out, isn't macOS blocking the helper
-    if (blocked) {
-      blocked = false;
-      void browser.storage.session.remove(HELPER_BLOCKED).catch(() => {});
-      void action?.setBadgeText({ text: "" });
-    }
-    // only the helper answering shows it isn't blocked any more
-    if (state !== "locked" && state !== "awaiting-code" && state !== "unlocked") return;
-    void browser.storage.local.get(REPORTED_BLOCKED).then(async (stored) => {
-      if (stored[REPORTED_BLOCKED] !== true) return;
-      await companion.reportHelper(false);
-      await browser.storage.local.remove(REPORTED_BLOCKED);
-    });
+  let badged = false;
+  accounts.onChange(() => {
+    const unavailable = accounts.all.some(({ status }) => status.state === "unavailable");
+    if (unavailable === badged) return;
+    badged = unavailable;
+    void action?.setBadgeText({ text: unavailable ? "!" : "" });
+    if (unavailable) void action?.setBadgeBackgroundColor({ color: "#e8a33d" });
   });
 
   /** Apple's helper comes with macOS and with iCloud for Windows; elsewhere there's nothing to set up. */
   const supported = platform().then((os) => os !== "other");
 
-  // A fresh install that can't reach the helper yet opens the setup page, so nobody has to find
-  // the toolbar button first; so does one whose helper won't start, which explains it. A computer
+  /** Accounts that can be unlocked here (set up, and not refused by the system). */
+  const unlockable = (account: Account) => !CANT_UNLOCK.includes(account.status.state);
+
+  // A fresh install that can't reach an account yet opens the setup page, so nobody has to find
+  // the toolbar button first; so does one that can't be used here, which explains it. A computer
   // that is set up already (a reinstall) sees nothing.
   browser.runtime.onInstalled.addListener(async ({ reason }) => {
     if (reason !== "install" || !(await supported)) return;
-    await session.connect().catch(() => {});
-    if (session.status.state === "no-helper" || session.status.state === "blocked") await openSetupPage();
+    await accounts.connect(["offline", "needs-setup"]);
+    if (!accounts.all.every(unlockable)) await openSetupPage();
   });
 
   function openSetupPage() {
@@ -194,17 +170,20 @@ export default defineBackground(() => {
   // session ends, or when the user asks in the popup. One waiting a day takes the user's next break
   // (Firefox on macOS reports no screen lock, so an hour away counts too).
   const updates = new PendingUpdate({
-    busy: () => session.status.state === "unlocked" || session.status.state === "awaiting-code",
+    busy: () => accounts.busy,
     restart: () => browser.runtime.reload(),
   });
   browser.runtime.onUpdateAvailable.addListener(({ version }) => updates.available(version));
-  session.onChange(() => updates.applyIfHarmless());
+  accounts.onChange(() => updates.applyIfHarmless());
   browser.idle.setDetectionInterval(60 * 60);
 
   browser.idle.onStateChanged.addListener(async (state) => {
     if (state === "active") return;
-    if (updates.overdue) session.lock();
-    else if (state === "locked" && (await getSettings()).lockOnScreenLock) session.lock();
+    if (updates.overdue) return accounts.lock();
+    if (state !== "locked") return;
+    for (const account of accounts.all) {
+      if ((await accounts.settings(account.id)).lockOnScreenLock) accounts.lock(account.id);
+    }
   });
 
   // Chromium leaves open tabs without the content script after an update; Firefox injects it itself.
@@ -226,7 +205,7 @@ export default defineBackground(() => {
   // on the first unlock, once per profile; "installing" it restarts the extension as it is.
   const simulated = import.meta.env.WXT_SIMULATE_UPDATE as string | undefined;
   if (simulated) {
-    session.onChange(async ({ state }) => {
+    accounts.onChange(async (_, { state }) => {
       if (state !== "unlocked" || updates.version) return;
       if ((await browser.storage.local.get("simulatedUpdate")).simulatedUpdate) return;
       await browser.storage.local.set({ simulatedUpdate: true });
@@ -234,20 +213,20 @@ export default defineBackground(() => {
     });
   }
 
-  const status = (): Status => ({ ...session.status });
+  const status = async (): Promise<Status> => ({ accounts: await accounts.views() });
 
-  /** Status plus whether the companion app can unlock with Touch ID. */
+  /** Status plus the companion app's, and what the popup should say about setup and updates. */
   async function fullStatus(): Promise<Status> {
-    const base = status();
-    if (base.state === "no-helper" || base.state === "blocked") return base;
+    const base = await status();
+    // before setup, the companion isn't asked
+    if (!base.accounts.some(unlockableView)) return base;
     const state = await companion.state();
     const update = await companion.update();
-    const connected = base.state === "locked" || base.state === "awaiting-code";
+    const connected = base.accounts.some((a) => a.state === "locked" || a.state === "unlocking");
     const justConnected = connected && (await browser.storage.local.get(SETUP_PENDING))[SETUP_PENDING];
     return {
       ...base,
       companion: state,
-      touchId: state === "ready" && (await getSettings()).touchId,
       ...(update ? { companionUpdate: update } : {}),
       ...(updates.version ? { extensionUpdate: updates.version } : {}),
       ...(justConnected === true ? { justConnected } : {}),
@@ -344,7 +323,7 @@ export default defineBackground(() => {
             : settings.generatePasswords;
     if (!enabled) return { show: "none" };
     if (kind === "email") {
-      // Hide My Email works without Apple Passwords, so it's offered even while locked
+      // Hide My Email works without a password manager, so it's offered even while locked
       const suggests =
         settings.generatePasswords &&
         (settings.hideMyEmail ||
@@ -355,19 +334,18 @@ export default defineBackground(() => {
       const fills = signIn && settings.inlineMenu && ((await connectedUnlocked()) || canUnlock());
       return { show: suggests || fills ? "email" : "none" };
     }
-    // "no-helper" too: the user may have just run the setup. Never "blocked": see HELPER_BLOCKED
-    if (["disconnected", "closed", "no-helper"].includes(session.status.state)) {
-      await session.connect().catch(() => {});
-    }
-    if (!session.isUnlocked) {
+    // "needs-setup" too: the user may have just run the setup. Never "unavailable": only the user
+    // retries those (for Apple, each try leaves a crash report on the Mac)
+    await accounts.connect(["offline", "needs-setup"]);
+    if (!accounts.anyUnlocked) {
+      if (accounts.all.some(unlockable)) return { show: "locked" };
       // an unlock button that can't work helps nobody; the toolbar badge and popup explain it
-      if (session.status.state === "blocked") return { show: "none" };
-      if (session.status.state !== "no-helper") return { show: "locked" };
+      if (!accounts.all.some((account) => account.status.state === "needs-setup")) return { show: "none" };
       return { show: (await supported) ? "setup" : "none" };
     }
     // saving needs the session, so new passwords are offered only once unlocked
     if (kind === "new-password") return { show: "generate" };
-    // many code fields want a code sent by SMS or email: offer only codes Apple Passwords has
+    // many code fields want a code sent by SMS or email: offer only codes an account has
     if (kind === "one-time-code") {
       const codes = await oneTimeCodesFor(caller.tabId).catch(() => undefined);
       return { show: codes && codes.codes.length > 0 ? "codes" : "none" };
@@ -379,27 +357,28 @@ export default defineBackground(() => {
   // Passwords generated for open menus (by tab and menu nonce), and the one filled per tab.
   const generatedForMenu = new Map<string, GeneratedPasswords>();
   const generatedByTab = new Map<number, GeneratedLogin>();
-  // Filled passwords Apple Passwords may not have (not saved yet, declined, or an update that
+  // Filled passwords the password manager may not have (not saved yet, declined, or an update that
   // can't be confirmed), kept in memory until the session ends for the popup to show.
   const unconfirmed: { id: string; hostname: string; username: string; password: string }[] = [];
   // Logins chosen on a username-only step, by hostname: a sign-in's next step (the password, same
   // tab) lists it alone, and a password reset (any tab: the link opens a new one) saves for it.
-  // Only the username is kept, briefly, and forgotten once used: rather no guess than a stale one.
-  const chosenLogins = new Map<string, { username: string; tabId: number; at: number }>();
+  // Only the username (and the login's ref) is kept, briefly, and forgotten once used: rather no
+  // guess than a stale one.
+  const chosenLogins = new Map<string, { username: string; ref: string; tabId: number; at: number }>();
   const CHOSEN_LOGIN_MS = 10 * 60_000;
 
   /** The login just chosen on `hostname` (in `tabId`, if given), if any. */
-  function chosenLogin(hostname: string, tabId?: number): string | undefined {
+  function chosenLogin(hostname: string, tabId?: number): { username: string; ref: string } | undefined {
     const chosen = chosenLogins.get(hostname);
     if (!chosen || Date.now() - chosen.at >= CHOSEN_LOGIN_MS) return undefined;
-    return tabId === undefined || chosen.tabId === tabId ? chosen.username : undefined;
+    return tabId === undefined || chosen.tabId === tabId ? chosen : undefined;
   }
 
   /** Who a new password is for when the form doesn't say: the login just chosen, or the only one. */
   async function accountFor(hostname: string): Promise<string | undefined> {
     const chosen = chosenLogin(hostname);
-    if (chosen !== undefined) return chosen;
-    const usernames = await usernamesFor(hostname);
+    if (chosen !== undefined) return chosen.username;
+    const usernames = await accounts.usernames(hostname);
     return usernames.length === 1 ? usernames[0] : undefined;
   }
 
@@ -416,16 +395,15 @@ export default defineBackground(() => {
   // Logins sent with a form, by tab, until the page moves on (see saveSentLogin)
   const sentLogins = new Map<number, SentLogin>();
 
-  // locking forgets every generated and sent password, like the session key
-  session.onChange(({ state }) => {
-    if (state === "unlocked") return;
+  /** Forgets every generated and sent password (an account locked: see unlockedAccounts). */
+  function forgetPasswords() {
     sentLogins.clear();
     chosenLogins.clear();
     signedIn.clear();
     unconfirmed.length = 0;
     generatedByTab.clear();
     generatedForMenu.clear();
-  });
+  }
   browser.tabs.onRemoved.addListener((tabId) => {
     sentLogins.delete(tabId);
     signedIn.delete(tabId);
@@ -443,15 +421,9 @@ export default defineBackground(() => {
     return context;
   }
 
-  /** The usernames saved for a site, looked up on a tab id of our own (see PROBE_TAB). */
-  async function usernamesFor(hostname: string): Promise<string[]> {
-    const client = await session.unlockedClient();
-    return (await client.getLogins(hostname, PROBE_TAB)).map((login) => login.username);
-  }
-
   /**
-   * Fills a generated password right away, like Safari. Apple Passwords is asked to save it when
-   * the form is submitted (see saveGenerated); until it has it, the popup keeps it.
+   * Fills a generated password right away, like Safari. The password manager is asked to save it
+   * when the form is submitted (see saveGenerated); until it has it, the popup keeps it.
    */
   async function fillGenerated(
     tabId: number,
@@ -493,17 +465,17 @@ export default defineBackground(() => {
   }
 
   /**
-   * Asks Apple Passwords to save a password from the popup's list. A new login confirms the save
-   * and leaves the list; an update can't be seen, so it stays, as after the page's own ask.
+   * Asks the password manager to save a password from the popup's list. A new login confirms the
+   * save and leaves the list; an update can't be seen, so it stays, as after the page's own ask.
    */
   async function saveUnconfirmed(tabId: number, entry: (typeof unconfirmed)[number]) {
     const { hostname, username, password } = entry;
-    const before = await usernamesFor(hostname);
-    const client = await session.unlockedClient();
-    await client.savePassword({ hostname, username, password }, { tabId, frameId: 0 });
+    const target = accounts.saveTarget(hostname);
+    const before = await accounts.usernames(hostname, target);
+    await target.save({ hostname, username, password }, { tabId });
     if (username !== "" && before.includes(username)) return;
     // the popup may close while macOS asks: this carries on without it
-    void waitForLogin(() => usernamesFor(hostname), username, before).then((saved) => {
+    void waitForLogin(() => accounts.usernames(hostname, target), username, before).then((saved) => {
       if (saved !== undefined) forget(password);
     });
   }
@@ -524,9 +496,9 @@ export default defineBackground(() => {
   });
 
   /**
-   * The page moved on with a generated password: ask Apple Passwords, once, to save it with the
-   * form's username. A new login confirms the save; an update can't be seen, so it's assumed and
-   * the password stays in the popup's list.
+   * The page moved on with a generated password: ask the password manager, once, to save it with
+   * the form's username. A new login confirms the save; an update can't be seen, so it's assumed
+   * and the password stays in the popup's list.
    */
   async function saveGenerated(tabId: number, username: string) {
     const generated = generatedByTab.get(tabId);
@@ -537,13 +509,13 @@ export default defineBackground(() => {
     username ||= generated.account ?? "";
     chosenLogins.delete(generated.hostname);
     generated.username = username;
-    const before = await usernamesFor(generated.hostname);
-    const client = await session.unlockedClient();
     const { hostname, password } = generated;
-    await client.savePassword({ hostname, username, password }, { tabId, frameId: 0 });
+    const target = accounts.saveTarget(hostname);
+    const before = await accounts.usernames(hostname, target);
+    await target.save({ hostname, username, password }, { tabId });
     const tab = tabId;
     if (username !== "" && before.includes(username)) return markSaved(tab, generated, username, false);
-    const saved = await waitForLogin(() => usernamesFor(hostname), username, before);
+    const saved = await waitForLogin(() => accounts.usernames(hostname, target), username, before);
     if (generated.username !== username) return; // a newer submit took over
     if (saved === undefined) generated.state = "unsaved";
     // without a username, it's the one the user typed into macOS's Save dialog
@@ -569,7 +541,7 @@ export default defineBackground(() => {
     sentLogins.delete(caller.tabId);
     const url = fillableUrl(caller.url);
     // locked, nothing can be looked up or saved; asking to unlock for this would be a nuisance
-    if (!url || !password || !session.isUnlocked) return;
+    if (!url || !password || !accounts.anyUnlocked) return;
     // a password we generated has its own save
     if (generatedByTab.get(caller.tabId)?.password === password) return;
     const login: SentLogin = {
@@ -597,8 +569,10 @@ export default defineBackground(() => {
    */
   async function accountToSave(hostname: string, username: string, tabId: number): Promise<string | undefined> {
     // a password-only step: the account chosen on the username step
-    username ||= chosenLogin(hostname, tabId) ?? "";
-    const saved = await usernamesFor(hostname).catch(() => undefined);
+    username ||= chosenLogin(hostname, tabId)?.username ?? "";
+    const saved = await Promise.resolve()
+      .then(() => accounts.usernames(hostname, accounts.saveTarget(hostname)))
+      .catch(() => undefined);
     if (!saved) return undefined;
     // no username: one of the site's saved accounts, unless it has none
     if (!username) return saved.length === 0 ? "" : undefined;
@@ -607,8 +581,8 @@ export default defineBackground(() => {
   }
 
   /**
-   * Asks Apple Passwords to save the tab's sent login (macOS asks the user first) if the page it
-   * shows now went past the sign-in. The content script may not be listening yet right after a
+   * Asks the password manager to save the tab's sent login (macOS asks the user first) if the page
+   * it shows now went past the sign-in. The content script may not be listening yet right after a
    * page loads, so it's asked a few times.
    */
   async function saveSentLogin(tabId: number) {
@@ -629,8 +603,7 @@ export default defineBackground(() => {
           sentLogins.delete(tabId);
           if (state === "failed") return;
           const { hostname, password } = login;
-          const client = await session.unlockedClient();
-          await client.savePassword({ hostname, username, password }, { tabId, frameId: 0 });
+          await accounts.saveTarget(hostname).save({ hostname, username, password }, { tabId });
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 400));
@@ -640,29 +613,16 @@ export default defineBackground(() => {
     }
   }
 
-  // Hide My Email: the header rule exists only while the user has it turned on (session rules
-  // don't outlive the browser, so it's set again on every start)
-  const hideMyEmail = new HideMyEmail(async (input, init) => {
-    if (!(await getSettings()).hideMyEmail || !(await hasHideMyEmailConsent())) {
-      throw new Error("Turn on Hide My Email and allow its data permissions first.");
-    }
-    return fetch(input, init);
+  // Email aliases: iCloud's Hide My Email, set up only while the user has it turned on
+  const aliases = new ICloudAliases({
+    allowed: async () => (await getSettings()).hideMyEmail && (await hasHideMyEmailConsent()),
+    withoutICloudPlus,
   });
   async function syncHideMyEmail(on: boolean) {
-    on = on && (await hasHideMyEmailConsent());
-    await browser.declarativeNetRequest.updateSessionRules({
-      removeRuleIds: [HEADER_RULE_ID],
-      ...(on ? { addRules: [headerRule(new URL(browser.runtime.getURL("/")).host)] } : {}),
-    });
-    if (!on) {
-      hideMyEmail.reset();
-      addressCache.clear();
-    }
+    await aliases.setEnabled(on && (await hasHideMyEmailConsent()));
   }
   void getSettings().then((settings) => syncHideMyEmail(settings.hideMyEmail));
 
-  // each site's Hide My Email address, remembered for a minute so reopening the menu is instant
-  const addressCache = new Map<string, { address: string | undefined; at: number }>();
   if (import.meta.env.FIREFOX) {
     browser.permissions.onRemoved.addListener(() => {
       void hasHideMyEmailConsent().then((allowed) => {
@@ -732,18 +692,19 @@ export default defineBackground(() => {
     return { hideMyEmail: hme, contacts, ...(logins ? { logins } : {}) };
   }
 
-  /** Whether Apple Passwords is unlocked, reconnecting first if the connection was lost. */
+  /** Whether an account is unlocked, reconnecting first those whose connection was lost. */
   async function connectedUnlocked(): Promise<boolean> {
-    if (["disconnected", "closed"].includes(session.status.state)) await session.connect().catch(() => {});
-    return session.isUnlocked;
+    await accounts.connect();
+    return accounts.anyUnlocked;
   }
 
   /**
-   * Whether unlocking can work: as for login fields, not when macOS blocks the helper, nor before
-   * this browser is set up (an email field doesn't ask for that: its other suggestions work without).
+   * Whether unlocking can work: as for login fields, not for an account the system won't let us
+   * use, nor before this browser is set up (an email field doesn't ask for that: its other
+   * suggestions work without).
    */
   function canUnlock(): boolean {
-    return !["blocked", "no-helper"].includes(session.status.state);
+    return accounts.all.some(unlockable);
   }
 
   /**
@@ -755,9 +716,7 @@ export default defineBackground(() => {
     const url = await tabUrl(tabId);
     if (!url) return undefined;
     try {
-      const client = await session.unlockedClient();
-      const logins = await client.getLogins(url.hostname, { tabId });
-      return { state: "ready", hostname: url.hostname, usernames: logins.map(({ username }) => username) };
+      return { state: "ready", hostname: url.hostname, logins: await accounts.logins(url.hostname, { tabId }) };
     } catch {
       return undefined;
     }
@@ -769,22 +728,8 @@ export default defineBackground(() => {
     }
     const url = await tabUrl(tabId);
     if (!url) return { state: "off" };
-    try {
-      let cached = addressCache.get(url.hostname);
-      if (!cached || Date.now() - cached.at > 60_000) {
-        cached = { address: await hideMyEmail.addressFor(url.hostname), at: Date.now() };
-        addressCache.set(url.hostname, cached);
-      }
-      const { address } = cached;
-      return address ? { state: "ready", address } : { state: "ready" };
-    } catch (error) {
-      if (error instanceof ICloudError && error.code === "signed-out") return { state: "signed-out" };
-      if (error instanceof ICloudError && error.code === "no-icloud-plus") {
-        await withoutICloudPlus();
-        return { state: "needs-icloud-plus" };
-      }
-      return { state: "error", message: error instanceof Error ? error.message : String(error) };
-    }
+    const alias = await aliases.state(url.hostname);
+    return alias.state === "needs-upgrade" ? { state: "needs-icloud-plus" } : alias;
   }
 
   async function contactEmailsState(settings: Settings): Promise<ContactEmailsState> {
@@ -794,9 +739,7 @@ export default defineBackground(() => {
     if (!settings.suggestEmails) return { state: "off" };
     // the app answers only a browser running Apple's helper (anything else could be a program
     // reading Contacts through it), so make sure ours is: connecting starts it, without pairing
-    if (session.status.state === "disconnected" || session.status.state === "closed") {
-      await session.connect().catch(() => {});
-    }
+    await accounts.connect();
     try {
       return { state: "ready", emails: await companion.myEmails() };
     } catch (error) {
@@ -812,23 +755,15 @@ export default defineBackground(() => {
     await saveSettings({ hideMyEmail: false, hideMyEmailHint: false });
   }
 
-  /** Runs a Hide My Email call, turning the feature off if the account turns out to lack iCloud+. */
-  async function icloud<T>(call: () => Promise<T>): Promise<T> {
-    try {
-      return await call();
-    } catch (error) {
-      if (error instanceof ICloudError && error.code === "no-icloud-plus") await withoutICloudPlus();
-      throw error;
-    }
-  }
-
   async function saveSettings(changes: Partial<Settings>): Promise<Settings> {
     if (changes.hideMyEmail && !(await hasHideMyEmailConsent())) {
       throw new Error("Allow Hide My Email's data permissions before turning it on.");
     }
     const before = await getSettings();
     const settings = { ...before, ...changes };
-    await browser.storage.local.set({ settings });
+    // what older versions kept here stays, for the accounts to start from (see accountsStore)
+    const { settings: stored } = await browser.storage.local.get("settings");
+    await browser.storage.local.set({ settings: { ...(stored as object | undefined), ...settings } });
     if (settings.hideMyEmail !== before.hideMyEmail) await syncHideMyEmail(settings.hideMyEmail);
     return settings;
   }
@@ -862,63 +797,52 @@ export default defineBackground(() => {
     }
     switch (request.type) {
       case "get-status":
-        // retrying "no-helper" is how the popup and setup page notice that setup just finished;
-        // "blocked" waits for the user to ask (retry-connection)
-        if (session.status.state === "disconnected" || session.status.state === "no-helper") {
-          await session.connect().catch(() => {});
-        }
+        // retrying "needs-setup" is how the popup and setup page notice that setup just finished;
+        // "unavailable" waits for the user to ask (retry-connection)
+        await accounts.connect(["offline", "needs-setup"]);
         return fullStatus();
       case "unlock-with-touch-id": {
-        if (session.isUnlocked) return status();
-        // fresh, like typing the code: one asked for earlier may be valid still, but its window closed
-        await session.requestNewCode();
-        const code = await companion.readCode();
-        try {
-          await session.verifyCode(code);
-        } catch (error) {
-          // a wrong code burns the challenge; put a fresh one on screen for typing instead
-          await session.requestNewCode().catch(() => {});
-          throw error;
-        }
+        const { unlock } = accounts.pairingCode(request.account);
+        if (!unlock.unlockWithTouchId) throw new Error("This account can't unlock with Touch ID.");
+        await unlock.unlockWithTouchId();
         return status();
       }
       case "request-code":
-        await (request.fresh ? session.requestNewCode() : session.requestCode());
+        await accounts.pairingCode(request.account).unlock.requestCode(request.fresh ?? false);
         return status();
       case "verify-code":
-        await session.verifyCode(request.code);
+        await accounts.pairingCode(request.account).unlock.verifyCode(request.code);
         return status();
       case "lock":
-        session.lock();
+        accounts.lock(request.account);
         return status();
       case "install-update":
-        // restarting ends the session with Apple's helper anyway
+        // restarting locks every account anyway
         updates.apply();
         return status();
       case "list-logins": {
         const tabId = tabOf(caller, request.tabId);
         const url = await tabUrl(tabId);
         if (!url) return { logins: [] };
-        const client = await session.unlockedClient();
-        const logins = (await client.getLogins(url.hostname, { tabId })).map(({ username }) => ({ username }));
+        const logins = await accounts.logins(url.hostname, { tabId });
         // the login chosen on this sign-in's previous step comes first
         const current = chosenLogin(url.hostname, tabId);
-        const first = logins.filter(({ username }) => username === current);
+        const first = logins.filter(({ ref }) => ref === current?.ref);
         return {
           hostname: url.hostname,
           logins: [...first, ...logins.filter((login) => !first.includes(login))],
-          ...(first.length > 0 ? { chosen: current } : {}),
+          ...(first.length > 0 && current ? { chosen: current.ref } : {}),
         };
       }
       case "fill": {
         const tabId = tabOf(caller, request.tabId);
         const frames = await pageFrames(tabId);
-        const result = await fillLogin(tabId, request.username, async (origin, password) => {
+        const result = await fillLogin(tabId, request.ref, async (origin, username, password) => {
           for (const frameId of frames) {
             const [injection] = await browser.scripting.executeScript({
               target: { tabId, frameIds: [frameId] },
               func: fillCredentials,
-              args: [origin, request.username, password],
+              args: [origin, username, password],
             });
             const filled = String(injection?.result ?? "no-fields");
             if (filled !== "no-fields") return filled;
@@ -1022,12 +946,12 @@ export default defineBackground(() => {
         throw new Error("content scripts only");
       case "fill-from-menu": {
         const tabId = tabOf(caller);
-        const result = await fillLogin(tabId, request.username, async (origin, password) => {
+        const result = await fillLogin(tabId, request.ref, async (origin, username, password) => {
           const reply = (await relay(tabId, {
             type: "menu-fill",
             nonce: request.nonce,
             origin,
-            username: request.username,
+            username,
             password,
           })) as { result: string } | undefined;
           return reply?.result ?? "menu-hidden";
@@ -1037,8 +961,9 @@ export default defineBackground(() => {
       case "open-passwords-app": {
         const tabId = caller.tabId ?? request.tabId;
         const url = tabId === undefined ? undefined : await tabUrl(tabId).catch(() => undefined);
-        const client = await session.connect();
-        client.openPasswordsApp(url?.origin);
+        const account = accounts.appAccount();
+        if (!account) throw new Error("No password manager app to open.");
+        await account.openApp(url?.origin);
         return null;
       }
       case "menu-resize":
@@ -1051,6 +976,8 @@ export default defineBackground(() => {
         return getSettings();
       case "set-settings":
         return saveSettings(request.settings);
+      case "set-account-settings":
+        return accounts.setSettings(request.account, request.settings);
       case "email-suggestions":
         return emailSuggestions(tabOf(caller), request.logins);
       case "enable-hide-my-email": {
@@ -1075,15 +1002,14 @@ export default defineBackground(() => {
         return null;
       case "generate-hide-my-email":
         tabOf(caller);
-        return { address: await icloud(() => hideMyEmail.generate()) };
+        return { address: await aliases.generate() };
       case "use-hide-my-email": {
         const tabId = tabOf(caller);
         const url = await tabUrl(tabId);
         if (!url) throw new Error("this page can't be filled");
-        const email = request.reserve
-          ? await icloud(() => hideMyEmail.reserve(request.address, url.hostname))
-          : request.address;
-        addressCache.set(url.hostname, { address: email, at: Date.now() });
+        let email = request.address;
+        if (request.reserve) email = await aliases.reserve(request.address, url.hostname);
+        else aliases.used(email, url.hostname);
         const reply = (await relay(tabId, {
           type: "menu-fill-email",
           nonce: request.nonce,
@@ -1111,9 +1037,11 @@ export default defineBackground(() => {
       case "open-companion-app":
         await companion.openApp();
         return null;
-      case "retry-connection":
-        await session.connect({ retry: true }).catch(() => {});
+      case "retry-connection": {
+        const retrying = request.account === undefined ? accounts.all : [accounts.get(request.account)];
+        await Promise.all(retrying.map((account) => account.connect({ retry: true }).catch(() => {})));
         return fullStatus();
+      }
       case "open-companion-page":
         // our own page about the app, which links to its download
         await browser.tabs.create({ url: browser.runtime.getURL("/companion.html") });
@@ -1149,23 +1077,24 @@ export default defineBackground(() => {
   }
 
   /**
-   * Fills `username`'s login with `fill`. A username-only step (a multi-step sign-in) gets just the
-   * username, and the choice is remembered for the next step; the password is read (macOS may ask
-   * for Touch ID) only for a form with a password field.
+   * Fills the login `ref` names with `fill`. A username-only step (a multi-step sign-in) gets just
+   * the username, and the choice is remembered for the next step; the password is read (macOS may
+   * ask for Touch ID) only for a form with a password field.
    */
   async function fillLogin(
     tabId: number,
-    username: string,
-    fill: (origin: string, password: string | null) => Promise<string>,
+    ref: string,
+    fill: (origin: string, username: string, password: string | null) => Promise<string>,
   ): Promise<string> {
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
-    const result = await fill(url.origin, null);
-    if (result === "filled") chosenLogins.set(url.hostname, { username, tabId, at: Date.now() });
+    const { username } = await accounts.login(url.hostname, ref);
+    const result = await fill(url.origin, username, null);
+    if (result === "filled") chosenLogins.set(url.hostname, { username, ref, tabId, at: Date.now() });
     if (result !== "needs-password") return result;
     // the tab may have moved on meanwhile: the password is for the site it's on now, and only fills there
-    const { url: now, credential } = await credentialFor(tabId, username);
-    const filled = await fill(now.origin, credential.password);
+    const { url: now, credential } = await credentialFor(tabId, ref);
+    const filled = await fill(now.origin, username, credential.password);
     // signed in: no reset to save for, but maybe a verification code to fill next
     if (filled === "filled") {
       chosenLogins.delete(now.hostname);
@@ -1174,22 +1103,18 @@ export default defineBackground(() => {
     return filled;
   }
 
-  /** The codes for a page, asked for a stand-in tab, like logins (see PROBE_TAB). */
-  async function lookupOneTimeCodes(url: URL, client: ApplePasswordsClient): Promise<OneTimeCode[]> {
-    const windows = (await platform()) === "windows";
-    return findOneTimeCodes(client, [url.href], PROBE_TAB, windows, () => usernamesFor(url.hostname));
-  }
-
   /** The tab's verification codes, without digits. */
   async function oneTimeCodesFor(tabId: number): Promise<OneTimeCodesResult> {
     const url = await tabUrl(tabId);
     if (!url) return { codes: [] };
-    const client = await session.unlockedClient();
-    const codes = await lookupOneTimeCodes(url, client);
+    const codes = await accounts.oneTimeCodes(url);
     const current = signedInAs(tabId, url.hostname);
     return {
       hostname: url.hostname,
-      codes: oneTimeCodeViews(codes, current),
+      codes: oneTimeCodeViews(
+        codes.map(({ ref, username, domain }) => ({ id: ref, username, domain })),
+        current,
+      ),
       ...(current ? { signedInAs: current } : {}),
     };
   }
@@ -1201,21 +1126,15 @@ export default defineBackground(() => {
   async function oneTimeCodeDigits(tabId: number, id: string): Promise<{ origin: string; code: string }> {
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
-    const client = await session.unlockedClient();
-    const codes = await lookupOneTimeCodes(url, client);
-    const chosen = codes.find((code) => oneTimeCodeId(code) === id);
-    if (!chosen) throw new Error("that verification code is no longer saved");
-    const code = await client.currentOneTimeCode(chosen, [url.href], { tabId });
-    if (!code) throw new Error("Apple Passwords didn't give the code");
+    const code = await accounts.oneTimeCode(url, id, { tabId });
+    if (!code) throw new Error("Couldn't get the code. Try again.");
     return { origin: url.origin, code };
   }
 
-  async function credentialFor(tabId: number, username: string) {
+  async function credentialFor(tabId: number, ref: string) {
     const url = await tabUrl(tabId);
     if (!url) throw new Error("this page can't be filled");
-    const client = await session.unlockedClient();
-    const credential = await client.getPassword(url.hostname, username, { tabId });
-    if (!credential) throw new Error("that login is no longer saved");
+    const credential = await accounts.credential(url.hostname, ref, { tabId });
     return { url, credential };
   }
 
@@ -1300,7 +1219,32 @@ async function tabUrl(tabId: number): Promise<URL | undefined> {
   return signInFrames.get(tabId) ?? fillableUrl(tab.url);
 }
 
+/** States in which an account can't be unlocked: not set up, or not allowed here. */
+const CANT_UNLOCK: readonly AccountState[] = ["needs-setup", "unavailable"];
+
+const unlockableView = ({ state }: { state: AccountState }) => !CANT_UNLOCK.includes(state);
+
 async function getSettings(): Promise<Settings> {
   const { settings } = await browser.storage.local.get("settings");
-  return { ...defaultSettings(await platform()), ...(settings as Partial<Settings> | undefined) };
+  const merged: Record<string, unknown> = { ...DEFAULT_SETTINGS, ...(settings as Partial<Settings> | undefined) };
+  // kept per account now (see accountsStore)
+  for (const key of LEGACY_ACCOUNT_SETTINGS) delete merged[key];
+  return merged as unknown as Settings;
+}
+
+/** Accounts are kept in local storage; their settings start from what older versions kept in Settings. */
+function accountsStore(): AccountsStore {
+  return {
+    load: async () => (await browser.storage.local.get("accounts")).accounts as StoredAccount[] | undefined,
+    save: (list) => browser.storage.local.set({ accounts: list }),
+    legacy: async () => {
+      const { settings } = await browser.storage.local.get("settings");
+      const legacy: Partial<AccountSettings> = {};
+      for (const key of LEGACY_ACCOUNT_SETTINGS) {
+        const value = (settings as Record<string, unknown> | undefined)?.[key];
+        if (typeof value === "boolean") legacy[key] = value;
+      }
+      return legacy;
+    },
+  };
 }

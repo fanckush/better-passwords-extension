@@ -6,7 +6,8 @@ Better Passwords is a browser extension that reads logins from Apple Passwords (
 popup · inline menu (our extension pages)      autofill content script (on login pages)
    │ runtime messages                              │ one read-only question: "show a menu here?"
    ▼                                               ▼
-background worker ─── Session: one connection, kept open for the whole browser session
+background worker ─── Accounts: every connected password manager (one so far)
+   │                       └─ AppleAccount ─── Session: one connection, kept open all browser session
    │ runtime.connectNative(host)
    ▼
 Apple's PasswordManagerBrowserExtensionHelper   ← launched by the browser itself
@@ -25,6 +26,17 @@ Apple Passwords / iCloud Keychain
 | `apps/companion` | The optional Touch ID companion app (Swift). See [companion.md](companion.md). |
 | `scripts/setup-mac.sh` | One-time browser setup on macOS (see below). |
 | `scripts/setup-windows.ps1` | The same setup on Windows (see [Windows](#windows)). |
+
+## Accounts
+
+The extension doesn't talk to Apple Passwords directly: it talks to *accounts* (`src/accounts/`). An account is one connected password manager, an instance of a provider. Today there is one, Apple Passwords (`src/accounts/apple/`), but nothing outside the adapter assumes that, so another provider, or two accounts of the same one, can be added without touching the rest.
+
+- `src/accounts/types.ts` is what an account does: its status in provider-neutral words (`needs-setup`, `unavailable`, `offline`, `locked`, `unlocking`, `unlocked`), how it unlocks (`pairing-code` for Apple; the screen to show depends on this), what it can do (`capabilities`), and its logins, codes and saving. Each adapter maps its provider's quirks onto that. For Apple, that covers the helper's states, the stand-in tab its lookups use, and the companion app entering the code.
+- `src/accounts/registry.ts` (`Accounts`) holds the accounts. Reads go to every unlocked account and are merged. Each login or code carries a `ref` naming its account and its id there, so filling it goes back to that account. Saving a new login goes to one account, picked in one place (`saveTarget`). Per-account settings (`lockOnScreenLock`, `touchId`) are kept under `accounts` in local storage. Older versions kept them in `settings`, and they're moved over once.
+- Pages get `Status.accounts` and show whatever unlock screen each account's `unlock.kind` calls for. With one account, they show no account names.
+- `test/support/memory-account.ts` is a second kind of account (password unlock, real item ids), used only by unit tests to keep the registry honest.
+
+Email aliases are separate from accounts (`src/aliases/`): they work with any password manager. Hide My Email is the one `AliasProvider` so far (`src/aliases/icloud/`).
 
 ## One identity, separate browser packages
 
@@ -46,7 +58,7 @@ Until the bridge is registered, connecting fails with the browser's "host not fo
 
 iCloud for Windows (a Microsoft Store package) ships the same helper as `iCloudPasswordsExtensionHelper.exe`, and registers it as `com.apple.passwordmanager` for Apple's own extension IDs only. `scripts/setup-windows.ps1` writes our manifests to `%LOCALAPPDATA%\Better Passwords\` and registers them under `HKCU\Software\<browser>\NativeMessagingHosts`, pointing at the package's app execution alias (`%LOCALAPPDATA%\Microsoft\WindowsApps\iCloudPasswordsExtensionHelper.exe`). The package's own folder is renamed with each iCloud update; the alias isn't. Firefox refuses to start a host whose path is a link, which the alias is, so Firefox's manifest points at a one-line `.bat` next to it that starts the alias through `cmd.exe` (as Chromium does for every host).
 
-Windows has no launch constraints, so no browser is blocked. A helper that quits as it starts means iCloud for Windows was removed or its alias turned off, and the setup flow says that instead. The companion app is Mac only: off a Mac, it's never asked or offered (`unavailable` in `src/companion.ts`). Apple's Windows helper never asks for Windows Hello before giving out a password or a code, so on Windows the session ends when the PC locks unless the user turns that off (`defaultSettings` in `src/messages.ts`), and the code screens don't say "Confirm with Touch ID". What's different in the helper's protocol is in [protocol.md](protocol.md#windows).
+Windows has no launch constraints, so no browser is blocked. A helper that quits as it starts means iCloud for Windows was removed or its alias turned off, and the setup flow says that instead. The companion app is Mac only: off a Mac, it's never asked or offered (`unavailable` in `src/companion.ts`). Apple's Windows helper never asks for Windows Hello before giving out a password or a code, so on Windows the session ends when the PC locks unless the user turns that off (`appleDefaultSettings` in `src/accounts/apple/account.ts`), and the code screens don't say "Confirm with Touch ID". What's different in the helper's protocol is in [protocol.md](protocol.md#windows).
 
 ## Sessions
 
@@ -122,4 +134,4 @@ Below Hide My Email, email fields list the emails on the user's own contact card
 
 Email fields get a menu that offers Hide My Email: a sign-up's, and any other that isn't part of a sign-in (a newsletter, a contact form). A lone field named for the account (`name="username"`, a forgot-password form) or in a form that signs in gets saved logins instead. Until the user turns it on, it's a hint with a ✕ that dismisses it for good (the popup can still turn it on). Once on, the menu shows the address made for this site before, or creates one: "Hide My Email…" proposes a random address ("Try Another" for a new one), and choosing it reserves it with the site as its label, then fills it in.
 
-Apple's helper has no Hide My Email, so this uses icloud.com's web service with the browser's icloud.com sign-in (`src/icloud/hide-my-email.ts`, background only). That service accepts only icloud.com's Origin. While the feature is on, a session rule sets Origin and Referer on requests to iCloud that our extension starts outside any tab, which means our background's own. Turning the feature off removes the rule. See the [threat model](threat-model.md).
+Apple's helper has no Hide My Email, so this uses icloud.com's web service with the browser's icloud.com sign-in (`src/aliases/icloud/`, background only). That service accepts only icloud.com's Origin. While the feature is on, a session rule sets Origin and Referer on requests to iCloud that our extension starts outside any tab, which means our background's own. Turning the feature off removes the rule. See the [threat model](threat-model.md).

@@ -1,7 +1,7 @@
 import "./style.css";
 import { DISPLAY_NAME } from "@/src/config.ts";
-import type { EmailSuggestions, MenuMessage, OneTimeCodeView } from "@/src/messages.ts";
-import { bindToMenu, send } from "@/src/messages.ts";
+import type { EmailSuggestions, MenuMessage, OneTimeCodeView, Status } from "@/src/messages.ts";
+import { bindToMenu, mainAccount, send } from "@/src/messages.ts";
 import type { Suggestion } from "@/src/passwords/generate.ts";
 import { computerName, platform } from "@/src/platform.ts";
 import { applySystemAccent } from "@/src/ui/accent.ts";
@@ -173,7 +173,9 @@ function message(text: string, isError = false) {
 let view: "unlocked" | "locked" | "other" = "other";
 
 // the logins shown, so typing in the field can narrow them down without asking again
-let loginsView: { logins: { username: string }[]; hostname: string; chosen?: string; error?: string } | undefined;
+let loginsView:
+  | { logins: { ref: string; username: string }[]; hostname: string; chosen?: string; error?: string }
+  | undefined;
 /** What the user typed into the username field: only logins starting with it are listed. */
 let query = "";
 /** Whether the user asked for the logins besides the one chosen on the sign-in's previous step. */
@@ -227,7 +229,7 @@ function renderLogins() {
   const focused = onPasswordField && chosen !== undefined && !prefix && !showOthers && matches.length > 1;
   const shown = focused ? matches.slice(0, 1) : matches;
   render(
-    ...shown.map(({ username }) => row(KEY, username || "(no username)", hostname, () => void fill(username))),
+    ...shown.map(({ ref, username }) => row(KEY, username || "(no username)", hostname, () => void fill(ref))),
     focused ? othersRow(matches.length - 1, renderLogins) : null,
     error ? message(error, true) : null,
     h("hr", { class: "separator" }),
@@ -362,7 +364,7 @@ browser.runtime.onMessage.addListener((request: MenuMessage, sender) => {
     redraw?.();
   }
   // unlocked or locked elsewhere, like the popup
-  if (request.type === "session-changed") {
+  if (request.type === "accounts-changed") {
     if (request.unlocked) void unlocked();
     else if (view === "unlocked") void (mode === "email" ? showEmail() : showLocked());
   }
@@ -515,7 +517,7 @@ async function showEmail() {
       whileAsking(send({ type: "email-suggestions", nonce, logins: withLogins })),
       send({ type: "get-status" }).catch(() => undefined),
     ]);
-    touchId = status?.touchId === true;
+    touchId = touchIdFor(status);
     renderEmail(suggestions);
   } catch (e) {
     render(message(messageOf(e), true));
@@ -562,10 +564,10 @@ function renderEmail(suggestions: EmailSuggestions, error?: string) {
   const { logins } = suggestions;
   view = logins?.state === "ready" ? "unlocked" : logins?.state === "locked" ? "locked" : "other";
   if (logins?.state === "ready") {
-    for (const username of logins.usernames) {
+    for (const { ref, username } of logins.logins) {
       usernames.add(username.toLowerCase());
       if (!username.toLowerCase().startsWith(prefix)) continue;
-      saved.push(row(KEY, username || "(no username)", logins.hostname, () => void fillSavedLogin(username)));
+      saved.push(row(KEY, username || "(no username)", logins.hostname, () => void fillSavedLogin(ref)));
     }
   } else if (!typing && logins?.state === "locked") {
     saved.push(unlockRow());
@@ -676,9 +678,9 @@ async function fillOwnEmail(email: string) {
 }
 
 /** Fills a saved login in, as the logins menu does: the password too, if the form asks for one. */
-async function fillSavedLogin(username: string) {
+async function fillSavedLogin(ref: string) {
   try {
-    const { result } = await send({ type: "fill-from-menu", nonce, username });
+    const { result } = await send({ type: "fill-from-menu", nonce, ref });
     if (result !== "filled") renderEmail(lastSuggestions, fillError(result));
   } catch (e) {
     // chosen again (say, after dismissing Touch ID): that newer choice carries on
@@ -769,9 +771,9 @@ function openPasswordsRow(withDetail: boolean) {
   });
 }
 
-async function fill(username: string) {
+async function fill(ref: string) {
   try {
-    const { result } = await send({ type: "fill-from-menu", nonce, username });
+    const { result } = await send({ type: "fill-from-menu", nonce, ref });
     if (result !== "filled") {
       await showLogins(
         result === "menu-hidden"
@@ -789,7 +791,7 @@ async function fill(username: string) {
 async function showLocked(error?: string) {
   view = "locked";
   const status = await send({ type: "get-status" }).catch(() => undefined);
-  touchId = status?.touchId === true;
+  touchId = touchIdFor(status);
   const draw = () => render(unlockRow(), error ? message(error, true) : null, ...passkeyRows());
   draw();
   redraw = draw;
@@ -815,6 +817,11 @@ function passkeyRows(): Node[] {
 
 /** Whether the companion app can unlock with Touch ID (as of the last status asked for). */
 let touchId = false;
+
+function touchIdFor(status: Status | undefined): boolean {
+  const account = mainAccount(status);
+  return "unlock" in account && account.unlock.kind === "pairing-code" && account.unlock.touchId === true;
+}
 
 function unlockRow(): HTMLButtonElement {
   // with the companion app, Touch ID replaces typing the code; the row says so underneath

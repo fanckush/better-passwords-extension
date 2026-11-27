@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HideMyEmail, headerRule, ICloudError } from "../src/icloud/hide-my-email.ts";
+import { HideMyEmail, headerRule, ICloudError } from "../src/aliases/icloud/hide-my-email.ts";
 
 type Call = { url: string; init?: RequestInit };
 

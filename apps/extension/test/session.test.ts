@@ -1,6 +1,6 @@
 import { FakeHelper, MemoryTransport } from "@app/fake-helper";
 import { describe, expect, it } from "vitest";
-import { Session } from "../src/session/session.ts";
+import { Session } from "../src/accounts/apple/session.ts";
 
 const vault = [{ hostname: "example.com", username: "alice", password: "pw" }];
 

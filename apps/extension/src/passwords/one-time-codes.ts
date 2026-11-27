@@ -1,6 +1,6 @@
-// Verification codes as the extension's pages see them: which account and site, never the digits.
-// The helper withholds those until Touch ID anyway (see docs/protocol.md), and a fill always asks
-// it for the code current at that moment.
+// Verification codes: finding Apple's (see AppleAccount), and listing them as the extension's pages
+// see them: which account and site, never the digits. The helper withholds those until Touch ID
+// anyway (see docs/protocol.md), and a fill always asks it for the code current at that moment.
 
 import type { ApplePasswordsClient, OneTimeCode } from "@app/protocol";
 import type { OneTimeCodeView } from "../messages.ts";
@@ -33,12 +33,15 @@ export function oneTimeCodeId(code: Pick<OneTimeCode, "source" | "username" | "d
   return JSON.stringify([code.source, code.username, code.domain]);
 }
 
-/** The codes to offer, the account just signed in with first, each account once. */
-export function oneTimeCodeViews(codes: readonly OneTimeCode[], signedInAs?: string): OneTimeCodeView[] {
+/** The codes to offer (`id` names each), the account just signed in with first, each one once. */
+export function oneTimeCodeViews<T extends OneTimeCodeView>(
+  codes: readonly T[],
+  signedInAs?: string,
+): OneTimeCodeView[] {
   const seen = new Set<string>();
   const views: OneTimeCodeView[] = [];
   for (const code of codes) {
-    const id = oneTimeCodeId(code);
+    const { id } = code;
     if (seen.has(id)) continue;
     seen.add(id);
     views.push({ id, username: code.username, domain: code.domain });

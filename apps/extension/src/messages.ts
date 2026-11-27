@@ -1,34 +1,39 @@
 // Messages to the background worker, from our extension pages (popup, inline menu) and, for one
 // read-only question, from the autofill content script. Web pages never talk to the background.
 
+import type { LoginRef } from "./accounts/registry.ts";
+import type { AccountSettings, AccountView } from "./accounts/types.ts";
 import type { FieldKind } from "./autofill/fields.ts";
 import type { CompanionState, CompanionUpdate } from "./companion.ts";
 import type { FieldRules, PasswordStyle, Strength, Suggestion } from "./passwords/generate.ts";
-import type { Platform } from "./platform.ts";
-import type { SessionStatus } from "./session/session.ts";
 
 export type Request =
   | { type: "get-status" }
-  | { type: "request-code"; fresh?: boolean }
-  | { type: "verify-code"; code: string }
+  // Unlocking an account with a code shown elsewhere (see UnlockMethod). `account`: which one; by
+  // default the first account that unlocks this way.
+  | { type: "request-code"; fresh?: boolean; account?: string }
+  | { type: "verify-code"; code: string; account?: string }
   /** Shows a code on the Mac, then lets the companion app enter it after Touch ID. */
-  | { type: "unlock-with-touch-id" }
+  | { type: "unlock-with-touch-id"; account?: string }
   /** `tabId` is required from the popup; the inline menu is always bound to its own tab. */
   | { type: "list-logins"; tabId?: number }
-  | { type: "fill"; tabId: number; username: string }
+  /** `ref`: a login from list-logins. */
+  | { type: "fill"; tabId: number; ref: string }
   /** Verification codes saved for the tab's site, without digits (see OneTimeCodesResult). */
   | { type: "list-one-time-codes"; tabId?: number }
   /** Fills a code into the tab's code field (from the popup); macOS asks for Touch ID first. */
   | { type: "fill-one-time-code"; tabId: number; id: string }
   /** The code's digits, for the popup to copy; macOS asks for Touch ID first. */
   | { type: "copy-one-time-code"; tabId: number; id: string }
-  | { type: "lock" }
+  /** Locks one account, or every account. */
+  | { type: "lock"; account?: string }
   /** Ends the session and restarts the extension, installing the version the browser downloaded. */
   | { type: "install-update" }
   | { type: "get-settings" }
   | { type: "set-settings"; settings: Partial<Settings> }
+  | { type: "set-account-settings"; account: string; settings: Partial<AccountSettings> }
   // inline menu → background → content script of the same tab
-  | { type: "fill-from-menu"; nonce: string; username: string }
+  | { type: "fill-from-menu"; nonce: string; ref: string }
   | { type: "fill-one-time-code-from-menu"; nonce: string; id: string }
   | { type: "menu-resize"; nonce: string; height: number }
   | { type: "menu-close"; nonce: string }
@@ -64,8 +69,8 @@ export type Request =
   | { type: "setup-seen" }
   /** Opens the Mac app's window (its setup), through its native host. */
   | { type: "open-companion-app" }
-  /** Tries Apple's helper again after macOS blocked it in this browser (see SessionState). */
-  | { type: "retry-connection" }
+  /** Tries an unavailable account again (Apple's helper, after macOS blocked it in this browser). */
+  | { type: "retry-connection"; account?: string }
   /** Generated passwords for the tab's site whose update Apple Passwords couldn't confirm. */
   | { type: "unconfirmed-passwords"; tabId: number }
   /** Asks Apple Passwords again to save one of them (from the popup); macOS shows its prompt. */
@@ -74,7 +79,7 @@ export type Request =
   /** "Show browser passkey list": the field the menu is on shows the browser's list once (see passkey-list.ts). */
   | { type: "menu-show-passkeys"; nonce: string }
 
-  /** Opens Apple's Passwords app, searching for the tab's site when there is one. */
+  /** Opens the password manager's app (Apple's Passwords), at the tab's site when there is one. */
   | { type: "open-passwords-app"; tabId?: number }
   // content script → background (the only requests content scripts may send)
   /** `unsure`: a password field that may be a sign-up's (see isUnsurePasswordField). */
@@ -101,14 +106,11 @@ export const CONTENT_SCRIPT_REQUESTS: ReadonlySet<Request["type"]> = new Set([
   "login-form-gone",
 ]);
 
+/** Options for the whole extension. Those of each account are in AccountSettings. */
 export interface Settings {
-  /** End the session when the Mac locks or sleeps. */
-  lockOnScreenLock: boolean;
   /** Suggestions when signing in: saved logins in login fields. */
   inlineMenu: boolean;
-  /** Unlock with Touch ID through the companion app, when it is installed. */
-  touchId: boolean;
-  /** Suggestions in verification code fields: the codes saved in Apple Passwords. */
+  /** Suggestions in verification code fields: the codes saved in the password manager. */
   oneTimeCodes: boolean;
   /** Suggestions when signing up: strong passwords, and the user's emails in email fields. */
   generatePasswords: boolean;
@@ -130,10 +132,8 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  lockOnScreenLock: false,
   inlineMenu: true,
   oneTimeCodes: true,
-  touchId: true,
   generatePasswords: true,
   hideMyEmail: false,
   hideMyEmailHint: true,
@@ -143,38 +143,44 @@ export const DEFAULT_SETTINGS: Settings = {
   hidePasskeyList: true,
 };
 
-/**
- * The defaults on this platform. Apple's helper on Windows never asks before giving out a password,
- * so there the session ends when the PC locks unless the user says otherwise.
- */
-export function defaultSettings(platform: Platform): Settings {
-  return platform === "windows" ? { ...DEFAULT_SETTINGS, lockOnScreenLock: true } : DEFAULT_SETTINGS;
-}
+/** Settings keys kept per account now, which older versions kept in Settings (see AccountsStore.legacy). */
+export const LEGACY_ACCOUNT_SETTINGS = [
+  "lockOnScreenLock",
+  "touchId",
+] as const satisfies readonly (keyof AccountSettings)[];
 
-export interface Status extends SessionStatus {
+export interface Status {
+  /** The accounts filled from, in order. Today one: Apple Passwords. */
+  accounts: AccountView[];
   /** The companion app, checked only while locked (unlocked sessions don't need it). */
   companion?: CompanionState;
   /** A newer companion app is out. */
   companionUpdate?: CompanionUpdate;
   /** A newer version of the extension, downloaded and waiting for the session to end. */
   extensionUpdate?: string;
-  /** True when the user wants Touch ID and the companion is ready for it. */
-  touchId?: boolean;
   /** This browser was just set up and hasn't been unlocked yet: say it worked, once. */
   justConnected?: boolean;
+}
+
+/**
+ * The account the popup and setup flow are about. There is one so far; with several, they'll show
+ * each. None (the background didn't answer) reads as "not set up".
+ */
+export function mainAccount(status: Status | undefined): AccountView | { state: "needs-setup"; error?: string } {
+  return status?.accounts[0] ?? { state: "needs-setup" };
 }
 
 export interface LoginsResult {
   /** Undefined when the tab is not a page we fill (e.g. chrome:// or plain http). */
   hostname?: string;
-  logins: { username: string }[];
-  /** The login chosen on this sign-in's previous step (a username-only one); listed first. */
+  logins: LoginRef[];
+  /** The ref of the login chosen on this sign-in's previous step (a username-only one); listed first. */
   chosen?: string;
 }
 
 /** A verification code as pages of the extension see it: never its digits, which need Touch ID. */
 export interface OneTimeCodeView {
-  /** Names the code in requests to fill or copy it; the background looks it up again then. */
+  /** Names the code (and its account) in requests to fill or copy it; the background looks it up again then. */
   id: string;
   username: string;
   domain: string;
@@ -191,8 +197,8 @@ export interface OneTimeCodesResult {
 export interface AutofillStatus {
   /**
    * "logins": saved logins exist for this site; "generate": suggest a new password;
-   * "codes": a verification code field; "locked": pairing needed; "setup": this browser can't
-   * reach Apple Passwords yet; "none": stay out of the way.
+   * "codes": a verification code field; "locked": unlocking needed; "setup": this browser can't
+   * reach the password manager yet; "none": stay out of the way.
    */
   show: "logins" | "generate" | "email" | "codes" | "locked" | "setup" | "none";
   /** For a menu to show: its nonce, which the background accepts from this tab's menu only. */
@@ -244,7 +250,7 @@ export interface EmailSuggestions {
    * they're listed first (none saved: the menu says so, as on a login field). "locked": none can be
    * listed until unlocked, so the menu offers that first.
    */
-  logins?: { state: "ready"; hostname: string; usernames: string[] } | { state: "locked" };
+  logins?: { state: "ready"; hostname: string; logins: LoginRef[] } | { state: "locked" };
 }
 
 export type NewPasswordResult = "filled" | "menu-hidden" | "no-fields" | "origin-mismatch";
@@ -261,6 +267,7 @@ interface Responses {
   "fill-one-time-code-from-menu": { result: string };
   "get-settings": Settings;
   "set-settings": Settings;
+  "set-account-settings": AccountSettings;
   "autofill-status": AutofillStatus;
   /** `unavailable`: why the site's rules leave nothing worth suggesting. */
   "generate-passwords": GeneratedPasswords | { unavailable: string };
@@ -352,9 +359,12 @@ export type MenuMessage =
    * the menu opened (the page tagged it later, as GitHub does), so the menu offers to show it now.
    */
   | { type: "menu-passkeys"; nonce: string }
-  /** Sent by the background to every extension page when the session unlocks or locks (say, from the popup). */
-  | { type: "session-changed"; unlocked: boolean }
-  /** Sent by the background when Apple Passwords has a new verification code: list them again. */
+  /**
+   * Sent by the background to every extension page when an account unlocks or locks (say, from the
+   * popup). `unlocked`: whether any account is unlocked now.
+   */
+  | { type: "accounts-changed"; unlocked: boolean }
+  /** Sent by the background when an account has a new verification code: list them again. */
   | { type: "one-time-codes-changed" }
   /** Sent by the background to the menu that asked to turn Hide My Email on: it was, or the user said no. */
   | { type: "hide-my-email-changed" };

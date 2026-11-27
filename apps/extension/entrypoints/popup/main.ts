@@ -1,7 +1,15 @@
 import "./style.css";
+import type { AccountSettings, AccountView } from "@/src/accounts/types.ts";
+import { HME_CONSENT_PORT, requestHideMyEmailConsent } from "@/src/aliases/icloud/consent.ts";
 import { DISPLAY_NAME } from "@/src/config.ts";
-import { HME_CONSENT_PORT, requestHideMyEmailConsent } from "@/src/icloud/consent.ts";
-import { type LoginsResult, type OneTimeCodesResult, type Settings, type Status, send } from "@/src/messages.ts";
+import {
+  type LoginsResult,
+  mainAccount,
+  type OneTimeCodesResult,
+  type Settings,
+  type Status,
+  send,
+} from "@/src/messages.ts";
 import { computerName, platform } from "@/src/platform.ts";
 import { applySystemAccent } from "@/src/ui/accent.ts";
 import { bindCodeInput } from "@/src/ui/code-input.ts";
@@ -42,16 +50,20 @@ async function refresh(error?: string) {
 
   // not set up yet, set up moments ago (the popup closes while the user does it), or set up in a
   // browser macOS doesn't let start Apple's helper (the setup flow explains)
-  if (status.state === "no-helper" || status.state === "blocked" || status.justConnected) return showSetup(status);
+  const account = mainAccount(status);
+  const settingUpNow = account.state === "needs-setup" || account.state === "unavailable";
+  if (!("unlock" in account) || settingUpNow || status.justConnected) return showSetup(status);
 
-  if (status.state === "unlocked") return showLogins(status, error);
+  if (account.state === "unlocked") return showLogins(status, error);
+  // each way of unlocking has its screen; so far, accounts unlock with a code shown elsewhere
+  if (account.unlock.kind !== "pairing-code") return showRetry(`${account.label} can't be unlocked here yet.`);
   // locked or disconnected: start unlocking right away, saving the user a click
-  const awaitingCode = status.state === "awaiting-code";
-  if (status.touchId && !error && !awaitingCode) return unlockWithTouchId(status);
+  const awaitingCode = account.state === "unlocking";
+  if (touchIdFor(status) && !error && !awaitingCode) return unlockWithTouchId(status);
   // a fresh code even if one is still valid: the user may have closed Apple's window since, and
   // nothing tells us
   codeRequest = popupSettled().then(() => send({ type: "request-code", fresh: true }));
-  const input = showCodeEntry(status, error ?? (awaitingCode ? status.error : undefined));
+  const input = showCodeEntry(status, error ?? (awaitingCode ? account.error : undefined));
   try {
     await codeRequest;
   } catch (e) {
@@ -63,6 +75,12 @@ async function refresh(error?: string) {
     window.focus();
     input.focus();
   }
+}
+
+/** Whether the companion app can enter the main account's code after Touch ID. */
+function touchIdFor(status: Status): boolean {
+  const account = mainAccount(status);
+  return "unlock" in account && account.unlock.kind === "pairing-code" && account.unlock.touchId === true;
 }
 
 /** The pending request for a code; a code typed meanwhile is checked once it's done. */
@@ -147,7 +165,7 @@ function showCodeEntry(status: Status, error?: string): HTMLInputElement {
   });
 
   let touchId: HTMLButtonElement | null = null;
-  if (status.touchId) {
+  if (touchIdFor(status)) {
     touchId = h("button", { class: "link", textContent: "Enter it for me" });
     touchId.addEventListener("click", () => void unlockWithTouchId(status));
   }
@@ -259,7 +277,7 @@ const SEARCH_AFTER = 10;
 
 /** `chosen`: the login picked on the sign-in's previous step (listed first), shown alone at first. */
 function loginList(tabId: number, logins: LoginsResult["logins"], chosen?: string) {
-  const items = logins.map(({ username }) => {
+  const items = logins.map(({ ref, username }) => {
     const name = username || "(no username)";
     const button = h(
       "button",
@@ -267,8 +285,8 @@ function loginList(tabId: number, logins: LoginsResult["logins"], chosen?: strin
       h("span", { class: "avatar", textContent: (username[0] ?? "?").toUpperCase() }),
       h("span", { class: "name", textContent: name }),
     );
-    button.addEventListener("click", () => void fill(tabId, username));
-    return { name: name.toLowerCase(), username, li: h("li", {}, button) };
+    button.addEventListener("click", () => void fill(tabId, ref));
+    return { name: name.toLowerCase(), ref, li: h("li", {}, button) };
   });
 
   const collapsed = chosen === undefined ? COLLAPSED : 1;
@@ -305,7 +323,7 @@ function loginList(tabId: number, logins: LoginsResult["logins"], chosen?: strin
   });
   search?.addEventListener("input", update);
   search?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && matches[0]) void fill(tabId, matches[0].username);
+    if (event.key === "Enter" && matches[0]) void fill(tabId, matches[0].ref);
   });
   update();
 
@@ -487,9 +505,9 @@ async function unconfirmedPasswords(tabId: number | undefined) {
   );
 }
 
-async function fill(tabId: number, username: string) {
+async function fill(tabId: number, ref: string) {
   try {
-    const { result } = await send({ type: "fill", tabId, username });
+    const { result } = await send({ type: "fill", tabId, ref });
     if (result === "filled") return window.close();
     await refresh(result === "no-fields" ? "No login fields found on this page." : "The page changed, try again.");
   } catch (e) {
@@ -499,21 +517,20 @@ async function fill(tabId: number, username: string) {
   }
 }
 
-type Option = (key: keyof Settings, label: string, detail?: string, disabled?: boolean) => HTMLElement;
+type Option<K extends string> = (key: K, label: string, detail?: string, disabled?: boolean) => HTMLElement;
 
-async function footer(status: Status) {
-  const settings: Settings = await send({ type: "get-settings" });
-  const option: Option = (key, label, detail, disabled = false) => {
-    const toggle = h("input", { type: "checkbox", checked: !disabled && settings[key], disabled });
+/** A switch for a boolean setting, saved with `save` as it's flipped (false: the user backed out). */
+function toggleFor<K extends string>(
+  values: Record<K, boolean>,
+  save: (key: K, on: boolean) => Promise<unknown>,
+): Option<K> {
+  return (key, label, detail, disabled = false) => {
+    const toggle = h("input", { type: "checkbox", checked: !disabled && values[key], disabled });
     toggle.addEventListener("change", async () => {
       try {
-        if (key === "hideMyEmail" && toggle.checked && !(await requestHideMyEmailConsent())) {
-          toggle.checked = false;
-          return;
-        }
-        await send({ type: "set-settings", settings: { [key]: toggle.checked } });
+        if ((await save(key, toggle.checked)) === false) toggle.checked = values[key];
       } catch (error) {
-        toggle.checked = settings[key];
+        toggle.checked = values[key];
         await refresh(messageOf(error));
       }
     });
@@ -524,6 +541,20 @@ async function footer(status: Status) {
       h("span", { class: "text" }, label, detail ? h("span", { class: "detail", textContent: detail }) : null),
     );
   };
+}
+
+async function footer(status: Status) {
+  const settings: Settings = await send({ type: "get-settings" });
+  const option = toggleFor<keyof Settings>(settings, async (key, on) => {
+    if (key === "hideMyEmail" && on && !(await requestHideMyEmailConsent())) return false;
+    await send({ type: "set-settings", settings: { [key]: on } });
+    return true;
+  });
+  // the options of the account shown (one so far)
+  const account = mainAccount(status) as AccountView;
+  const accountOption = toggleFor<keyof AccountSettings>(account.settings, (key, on) =>
+    send({ type: "set-account-settings", account: account.id, settings: { [key]: on } }),
+  );
   const lock = h("button", { class: "secondary", textContent: "Lock" });
   lock.addEventListener("click", async () => {
     await send({ type: "lock" });
@@ -542,13 +573,13 @@ async function footer(status: Status) {
     option("generatePasswords", "When signing up", "strong passwords and emails"),
     option("hideMyEmail", "Hide My Email", "iCloud+ addresses, labeled with the site's name"),
     // the companion app is Mac only; elsewhere there's nothing to offer
-    ...(status.companion === "unavailable" ? [] : [h("hr"), macAppSection(status, option)]),
+    ...(status.companion === "unavailable" ? [] : [h("hr"), macAppSection(status, option, accountOption)]),
     h("hr"),
     // Firefox's idle API never reports "locked", so the option would do nothing there
     h(
       "div",
       { class: "actions" },
-      import.meta.env.FIREFOX ? h("span") : option("lockOnScreenLock", `Lock when my ${computer} locks`),
+      import.meta.env.FIREFOX ? h("span") : accountOption("lockOnScreenLock", `Lock when my ${computer} locks`),
       lock,
     ),
   );
@@ -558,7 +589,7 @@ async function footer(status: Status) {
  * What the companion app adds. Without it (or before its setup is done) the options are shown, greyed
  * out, next to one button that gets it, so they're discoverable but never a switch that does nothing.
  */
-function macAppSection(status: Status, option: Option) {
+function macAppSection(status: Status, option: Option<keyof Settings>, accountOption: Option<keyof AccountSettings>) {
   const ready = status.companion === "ready";
   const openApp = (label: string) => {
     const button = h("button", { class: "link", textContent: label });
@@ -568,7 +599,7 @@ function macAppSection(status: Status, option: Option) {
   const options = h(
     "div",
     { class: "options" },
-    option("touchId", "Enter the 6-digit code for me", "after Touch ID", !ready),
+    accountOption("touchId", "Enter the 6-digit code for me", "after Touch ID", !ready),
     option("suggestEmails", "Suggest my emails", "from your contact card", !ready),
   );
   if (ready) {

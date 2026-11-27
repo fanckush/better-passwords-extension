@@ -4,15 +4,18 @@ import { describe, expect, it, vi } from "vitest";
 import { findOneTimeCodes, oneTimeCodeId, oneTimeCodeViews } from "../src/passwords/one-time-codes.ts";
 
 const code = (username: string, domain = "example.com", source = "totp") => ({
-  code: undefined,
+  code: undefined as string | undefined,
   username,
   domain,
   source,
 });
 
+/** A code as the background lists it: named by its id. */
+const withId = <T extends ReturnType<typeof code>>(c: T) => ({ ...c, id: oneTimeCodeId(c) });
+
 describe("oneTimeCodeViews", () => {
   it("lists accounts without digits, each once", () => {
-    const views = oneTimeCodeViews([code("alice"), { ...code("alice"), code: "123456" }, code("bob")]);
+    const views = oneTimeCodeViews([code("alice"), { ...code("alice"), code: "123456" }, code("bob")].map(withId));
     expect(views).toEqual([
       { id: oneTimeCodeId(code("alice")), username: "alice", domain: "example.com" },
       { id: oneTimeCodeId(code("bob")), username: "bob", domain: "example.com" },
@@ -21,12 +24,15 @@ describe("oneTimeCodeViews", () => {
   });
 
   it("puts the account just signed in with first, whatever its case", () => {
-    const views = oneTimeCodeViews([code("alice"), code("Bob"), code("carol")], "bob");
+    const views = oneTimeCodeViews([code("alice"), code("Bob"), code("carol")].map(withId), "bob");
     expect(views.map((v) => v.username)).toEqual(["Bob", "alice", "carol"]);
   });
 
   it("keeps the order when that account has no code", () => {
-    expect(oneTimeCodeViews([code("alice"), code("bob")], "dana").map((v) => v.username)).toEqual(["alice", "bob"]);
+    expect(oneTimeCodeViews([code("alice"), code("bob")].map(withId), "dana").map((v) => v.username)).toEqual([
+      "alice",
+      "bob",
+    ]);
   });
 
   it("tells apart codes of other sites and sources", () => {

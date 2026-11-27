@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hasHideMyEmailConsent, requestHideMyEmailConsent } from "../src/icloud/consent.ts";
+import { hasHideMyEmailConsent, requestHideMyEmailConsent } from "../src/aliases/icloud/consent.ts";
 
 afterEach(() => {
   vi.unstubAllEnvs();

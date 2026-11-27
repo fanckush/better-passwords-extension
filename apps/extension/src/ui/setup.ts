@@ -3,6 +3,7 @@
 // which opens on install and from the inline menu.
 
 import "./setup.css";
+import type { AccountStatus } from "../accounts/types.ts";
 import {
   COMPANION_CONNECT_URL,
   COMPANION_DOWNLOAD_URL,
@@ -11,7 +12,7 @@ import {
   SETUP_COMMAND,
   WINDOWS_SETUP_COMMAND,
 } from "../config.ts";
-import { type Status, send } from "../messages.ts";
+import { mainAccount, type Status, send } from "../messages.ts";
 import { computerName, type Platform, platform } from "../platform.ts";
 import { h } from "./h.ts";
 import { CHECK, icon } from "./icons.ts";
@@ -42,7 +43,8 @@ export interface SetupOptions {
  * "connected", then (on the setup page) "all set". It moves on by itself as setup completes. When
  * the helper can't be reached although setup is done, it says why instead of "connected".
  */
-export async function setupFlow(status: Status, options: SetupOptions): Promise<HTMLElement> {
+export async function setupFlow(full: Status | undefined, options: SetupOptions): Promise<HTMLElement> {
+  const status = mainAccount(full);
   const root = h("div", { class: "setup" });
   os = await platform();
   if (os === "other") {
@@ -63,14 +65,14 @@ export async function setupFlow(status: Status, options: SetupOptions): Promise<
 
 type Step = "welcome" | "blocked" | "unreachable" | "connected" | "done";
 
-function stepOf(status: Status): Step {
-  if (status.state === "no-helper") return "welcome";
-  if (status.state === "blocked") return "blocked";
-  if (status.state === "disconnected" && status.error) return "unreachable";
+function stepOf(status: AccountStatus): Step {
+  if (status.state === "needs-setup") return "welcome";
+  if (status.state === "unavailable") return "blocked";
+  if (status.state === "offline" && status.error) return "unreachable";
   return status.state === "unlocked" ? "done" : "connected";
 }
 
-async function showStep(root: HTMLElement, status: Status, options: SetupOptions) {
+async function showStep(root: HTMLElement, status: AccountStatus, options: SetupOptions) {
   switch (stepOf(status)) {
     case "welcome":
       return showWelcome(root, status, options);
@@ -85,8 +87,8 @@ async function showStep(root: HTMLElement, status: Status, options: SetupOptions
   }
 }
 
-function connected(status: Status | undefined): boolean {
-  return status?.state === "locked" || status?.state === "awaiting-code" || status?.state === "unlocked";
+function connected(status: AccountStatus | undefined): boolean {
+  return status?.state === "locked" || status?.state === "unlocking" || status?.state === "unlocked";
 }
 
 /** Calls `check` every few seconds until it returns true, or `root` leaves the page. */
@@ -110,7 +112,7 @@ function poll(root: HTMLElement, check: () => Promise<boolean>) {
   }, POLL_MS);
 }
 
-function showWelcome(root: HTMLElement, status: Status, options: SetupOptions) {
+function showWelcome(root: HTMLElement, status: AccountStatus, options: SetupOptions) {
   // The route last acted on, so a reopened popup is still waiting; one route is shown at a time,
   // so nobody thinks they need both
   let acted = savedRoute();
@@ -162,8 +164,10 @@ function showWelcome(root: HTMLElement, status: Status, options: SetupOptions) {
   );
 
   poll(root, async () => {
-    const latest = await send({ type: "get-status" }).catch(() => undefined);
-    if (!latest || (!connected(latest) && latest.state !== "blocked")) return false;
+    const answer = await send({ type: "get-status" }).catch(() => undefined);
+    if (!answer) return false;
+    const latest = mainAccount(answer);
+    if (!connected(latest) && latest.state !== "unavailable") return false;
     await showStep(root, latest, options);
     return true;
   });
@@ -173,7 +177,7 @@ function showWelcome(root: HTMLElement, status: Status, options: SetupOptions) {
  * Set up, but macOS kills Apple's helper as this browser starts it: only browsers Apple allows may
  * (the helper's launch constraints). Nothing on our side can change that, so say so plainly.
  */
-async function showBlocked(root: HTMLElement, status: Status, options: SetupOptions) {
+async function showBlocked(root: HTMLElement, status: AccountStatus, options: SetupOptions) {
   if (os === "windows") return showHelperMissing(root, status, options);
   // Forks often present themselves as Chrome (Ardia does), and Chrome itself is one Apple allows, so
   // a blocked "Google Chrome" or "Chromium" is some other browser
@@ -202,7 +206,7 @@ async function showBlocked(root: HTMLElement, status: Status, options: SetupOpti
  * Windows doesn't block browsers. Set up, but the helper quits as it starts: iCloud for Windows was
  * removed, or its helper alias was turned off.
  */
-function showHelperMissing(root: HTMLElement, status: Status, options: SetupOptions) {
+function showHelperMissing(root: HTMLElement, status: AccountStatus, options: SetupOptions) {
   show(
     root,
     h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
@@ -219,7 +223,7 @@ function showHelperMissing(root: HTMLElement, status: Status, options: SetupOpti
 }
 
 /** Set up, but the helper didn't answer for some other reason (it usually does next time). */
-function showUnreachable(root: HTMLElement, status: Status, options: SetupOptions) {
+function showUnreachable(root: HTMLElement, status: AccountStatus, options: SetupOptions) {
   show(
     root,
     h("img", { class: "app-icon", src: "/icon/128.png", alt: "" }),
@@ -235,14 +239,15 @@ function showUnreachable(root: HTMLElement, status: Status, options: SetupOption
  * "Try Again", which tries the helper once more. Whatever it finds that's different (connected,
  * blocked, or no answer) gets its own screen; the same again says `same` under the button.
  */
-function retryRoute(root: HTMLElement, status: Status, options: SetupOptions, same: string) {
+function retryRoute(root: HTMLElement, status: AccountStatus, options: SetupOptions, same: string) {
   const button = h("button", { class: "button primary", type: "button", textContent: "Try Again" });
   const outcome = h("p", { class: "note", attrs: { role: "status" } });
   outcome.hidden = true;
   button.addEventListener("click", async () => {
     button.disabled = true;
     button.textContent = "Trying…";
-    const latest = await send({ type: "retry-connection" }).catch(() => undefined);
+    const answer = await send({ type: "retry-connection" }).catch(() => undefined);
+    const latest = answer && mainAccount(answer);
     if (latest && stepOf(latest) !== stepOf(status)) return showStep(root, latest, options);
     button.disabled = false;
     button.textContent = "Try Again";
@@ -392,7 +397,7 @@ function showConnected(root: HTMLElement, options: SetupOptions) {
   if (!options.finish) return;
   poll(root, async () => {
     const latest = await send({ type: "get-status" }).catch(() => undefined);
-    if (latest?.state !== "unlocked") return false;
+    if (!latest || mainAccount(latest).state !== "unlocked") return false;
     showDone(root, options);
     return true;
   });

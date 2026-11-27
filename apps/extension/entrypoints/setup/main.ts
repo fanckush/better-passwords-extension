@@ -32,7 +32,7 @@ async function closeTab() {
 }
 
 async function render() {
-  const status = await send({ type: "get-status" }).catch(() => ({ state: "no-helper" as const }));
+  const status = await send({ type: "get-status" }).catch(() => undefined);
   page.replaceChildren(
     await setupFlow(status, {
       next: { label: "Unlock Now", run: (button) => void openPopup(button) },

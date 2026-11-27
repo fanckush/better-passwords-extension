@@ -223,7 +223,9 @@ test("refuses to fill when the page reveals a hidden menu only as the click land
     type Runtime = { runtime: { sendMessage(message: unknown): Promise<unknown> } };
     const { chrome } = globalThis as unknown as { chrome: Runtime };
     const nonce = new URLSearchParams(location.hash.slice(1)).get("nonce");
-    void chrome.runtime.sendMessage({ type: "fill-from-menu", nonce, username: "e2e-user", menuNonce: nonce });
+    // the login's ref, as list-logins gives it: its account, and its id there (Apple's: the username)
+    const ref = JSON.stringify(["apple", "e2e-user"]);
+    void chrome.runtime.sendMessage({ type: "fill-from-menu", nonce, ref, menuNonce: nonce });
   });
   await expect.poll(() => page.locator("app-autofill-menu").count()).toBe(0);
   await expect(page.locator("#pass")).toHaveValue("");
