@@ -127,6 +127,7 @@ export class MenuHost {
    * `orGenerate`: with no saved logins, suggest a strong password instead (a field that may be a sign-up's).
    * `weaker`: the password in "generated" modes is weaker than usual, held back by the site's rules.
    * `logins`: an email field that may sign in lists the site's saved logins too.
+   * `passkeys`: the browser's passkey list is hidden on the field, so the menu offers to show it.
    */
   open(
     anchor: HTMLInputElement,
@@ -137,7 +138,8 @@ export class MenuHost {
       orGenerate = false,
       weaker = false,
       logins = false,
-    }: { orGenerate?: boolean; weaker?: boolean; logins?: boolean } = {},
+      passkeys = false,
+    }: { orGenerate?: boolean; weaker?: boolean; logins?: boolean; passkeys?: boolean } = {},
   ): void {
     this.#anchor = anchor;
     this.#nonce = nonce;
@@ -156,6 +158,7 @@ export class MenuHost {
     if (orGenerate) params.set("orGenerate", "1");
     if (weaker) params.set("weaker", "1");
     if (logins) params.set("logins", "1");
+    if (passkeys) params.set("passkeys", "1");
     this.#frame = createFrame(`${this.menuUrl}#${params}`);
     this.#shadow.replaceChildren(this.#frame);
     if (!this.#host.isConnected) document.documentElement.append(this.#host);

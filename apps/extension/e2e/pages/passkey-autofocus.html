@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Test passkey login, autofocused</title>
+    <style>
+      body { font: 16px system-ui; padding: 40px; }
+      input { display: block; margin: 8px 0 16px; padding: 6px; width: 260px; }
+    </style>
+  </head>
+  <body>
+    <!-- like GitHub: the field has the focus from the start, and gets the "webauthn" token from a
+         script a moment later, once the page knows passkey autofill is available -->
+    <form id="login">
+      <label>Username <input id="user" autocomplete="username" /></label>
+      <label>Password <input id="pass" type="password" autocomplete="current-password" /></label>
+      <button type="submit">Sign in</button>
+    </form>
+    <script>
+      // focused as the page loads, before the extension's menu script runs (like an autofocus field)
+      document.getElementById("user").focus();
+      setTimeout(() => document.getElementById("user").setAttribute("autocomplete", "username webauthn"), 1500);
+    </script>
+  </body>
+</html>

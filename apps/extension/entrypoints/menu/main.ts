@@ -46,6 +46,8 @@ const mode = params.get("mode");
 const withLogins = params.get("logins") === "1";
 /** The generated password in the field ("generated" modes) is weaker than usual: the site's rules. */
 const weaker = params.get("weaker") === "1";
+/** The browser's passkey list is hidden on the field: offer to show it (see passkeyRows). */
+let hiddenPasskeys = params.get("passkeys") === "1";
 const panel = document.getElementById("menu") as HTMLElement;
 /** "Mac" or "PC": the computer showing Apple's code. Known long before a code is asked for. */
 let computer = "Mac";
@@ -107,7 +109,14 @@ function hide() {
   void send({ type: "menu-resize", nonce, height: 0 }).catch(() => {});
 }
 
+/**
+ * Draws the view on screen again, for "menu-passkeys". Set by the views that end in passkeyRows,
+ * right after they render; any other view (a code being typed, Touch ID) clears it.
+ */
+let redraw: (() => void) | undefined;
+
 function render(...children: (Node | null)[]) {
+  redraw = undefined;
   panel.replaceChildren(...children.filter((c): c is Node => c !== null));
   // right away: the frame stays hidden until the first report, and a hidden frame gets no
   // animation frames (reading the size lays the panel out synchronously)
@@ -154,7 +163,6 @@ let showOthers = false;
 
 async function showLogins(error?: string) {
   view = "unlocked";
-  await loadPasskeyState();
   let result: Awaited<ReturnType<typeof send<{ type: "list-logins" }>>>;
   try {
     result = await send({ type: "list-logins" });
@@ -164,11 +172,15 @@ async function showLogins(error?: string) {
   if (result.logins.length === 0) {
     loginsView = undefined;
     if (orGenerate) return showGenerate();
-    return render(
-      message(`No saved passwords for ${result.hostname ?? "this site"}.`),
-      openPasswordsRow(true),
-      ...passkeyRows(),
-    );
+    const draw = () =>
+      render(
+        message(`No saved passwords for ${result.hostname ?? "this site"}.`),
+        openPasswordsRow(true),
+        ...passkeyRows(),
+      );
+    draw();
+    redraw = draw;
+    return;
   }
   loginsView = {
     logins: result.logins,
@@ -198,6 +210,7 @@ function renderLogins() {
     openPasswordsRow(false),
     ...passkeyRows(),
   );
+  redraw = renderLogins;
 }
 
 function othersRow(count: number, showAll: () => void) {
@@ -306,6 +319,11 @@ browser.runtime.onMessage.addListener((request: MenuMessage, sender) => {
   // the menu sits above its field: listed bottom-up, the first item nearest the field
   if (request.type === "menu-placement" && nonce && request.nonce === nonce) {
     document.documentElement.classList.toggle("above", request.above);
+  }
+  // the page tagged the field for passkeys after the menu opened (an autofocused field, say)
+  if (request.type === "menu-passkeys" && nonce && request.nonce === nonce && !hiddenPasskeys) {
+    hiddenPasskeys = true;
+    redraw?.();
   }
   // unlocked or locked elsewhere, like the popup
   if (request.type === "session-changed") {
@@ -564,9 +582,12 @@ function renderEmail(suggestions: EmailSuggestions, error?: string) {
     .filter((section) => section.length > 0)
     .flatMap((section, i) => (i === 0 ? section : [h("hr", { class: "separator" }), ...section]));
 
+  // an email field may carry the passkey list too (the separator only below other rows)
+  const passkeys = typing ? [] : passkeyRows();
   // nothing to offer at all: closed; nothing left for what's typed: hidden until it's emptied
-  if (all.length === 0) return typing ? hide() : close();
-  render(...all);
+  if (all.length === 0 && passkeys.length === 0) return typing ? hide() : close();
+  render(...all, ...(all.length === 0 ? passkeys.slice(1) : passkeys));
+  redraw = () => renderEmail(suggestions, error);
 }
 
 /** A row with a ✕ that dismisses it for good (without choosing the row). */
@@ -720,25 +741,19 @@ async function showLocked(error?: string) {
   view = "locked";
   const status = await send({ type: "get-status" }).catch(() => undefined);
   touchId = status?.touchId === true;
-  await loadPasskeyState();
-  render(unlockRow(), error ? message(error, true) : null, ...passkeyRows());
+  const draw = () => render(unlockRow(), error ? message(error, true) : null, ...passkeyRows());
+  draw();
+  redraw = draw;
 }
 
-/** Whether the menu offers "Show browser passkey list" (the setting is on). */
-let passkeyShown = false;
-
-async function loadPasskeyState() {
-  passkeyShown = await send({ type: "passkey-state" })
-    .then((state) => state.shown)
-    .catch(() => false);
-}
-
-/** A separator and "Show browser passkey list", for login fields. Shows the browser's list once. */
+/**
+ * A separator and "Show browser passkey list", on a field where the browser's passkey list is hidden
+ * (see passkey-list.ts). The page closes the menu, and the browser lists its passkeys on the next click.
+ */
 function passkeyRows(): Node[] {
-  if (kind !== "login" || !passkeyShown) return [];
-  // no close() here: the page closes the menu and leaves the field unfocused (see autofill.content.ts)
-  const item = row(KEY, "Show browser passkey list", "Then click the field again", async () => {
-    await send({ type: "release-passkey" }).catch(() => {});
+  if (!hiddenPasskeys) return [];
+  const item = row(KEY, "Show browser passkey list", "Click the input again for the native window", () => {
+    void send({ type: "menu-show-passkeys", nonce }).catch(() => {});
   });
   return [h("hr", { class: "separator" }), item];
 }
@@ -762,7 +777,9 @@ function showSetup() {
       await send({ type: "open-setup-page" }).catch(() => {});
       close();
     }),
+    ...passkeyRows(),
   );
+  redraw = showSetup;
 }
 
 function unlockTitle() {

@@ -506,7 +506,7 @@ async function footer(status: Status) {
     // Chromium only: Firefox has no passkey list over login fields
     ...(import.meta.env.FIREFOX
       ? []
-      : [option("passkeyGuard", "Hide browser passkey list", "the menu offers it once, on request")]),
+      : [option("hidePasskeyList", "Hide browser passkey list", "the menu offers it once, on request")]),
     // the companion app is Mac only; elsewhere there's nothing to offer
     ...(status.companion === "unavailable" ? [] : [h("hr"), macAppSection(status, option)]),
     h("hr"),

@@ -65,10 +65,8 @@ export type Request =
   /** Asks Apple Passwords again to save one of them (from the popup); macOS shows its prompt. */
   | { type: "save-unconfirmed-password"; tabId: number; id: string }
 
-  /** Whether the menu offers "Show browser passkey list" (the setting; see passkey-guard.ts). */
-  | { type: "passkey-state" }
-  /** "Show browser passkey list": shows the browser's list once, for this sign-in. */
-  | { type: "release-passkey" }
+  /** "Show browser passkey list": the field the menu is on shows the browser's list once (see passkey-list.ts). */
+  | { type: "menu-show-passkeys"; nonce: string }
 
   /** Opens Apple's Passwords app, searching for the tab's site when there is one. */
   | { type: "open-passwords-app"; tabId?: number }
@@ -118,8 +116,11 @@ export interface Settings {
   suggestEmails: boolean;
   /** Mention the companion app under the code box (it skips typing the code) until dismissed. */
   companionCodeHint: boolean;
-  /** Chromium: hide the browser's passkey list on login fields (see passkey-guard.ts). Takes effect on the next page load. */
-  passkeyGuard: boolean;
+  /**
+   * Chromium: hide the browser's passkey list on login fields, where the inline menu offers to show
+   * it (see passkey-list.ts). Takes effect on the next page load.
+   */
+  hidePasskeyList: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -133,7 +134,7 @@ export const DEFAULT_SETTINGS: Settings = {
   companionEmailsHint: true,
   suggestEmails: true,
   companionCodeHint: true,
-  passkeyGuard: true,
+  hidePasskeyList: true,
 };
 
 /**
@@ -244,7 +245,6 @@ export type NewPasswordResult = "filled" | "menu-hidden" | "no-fields" | "origin
 /** What each request answers with. Requests not listed answer with the session status. */
 interface Responses {
   "get-status": Status;
-  "passkey-state": { shown: boolean };
   "list-logins": LoginsResult;
   fill: { result: string };
   "fill-from-menu": { result: string };
@@ -277,6 +277,7 @@ interface Responses {
   "menu-resize": null;
   "menu-close": null;
   "menu-focus-field": null;
+  "menu-show-passkeys": null;
   "open-passwords-app": null;
   "generated-username": null;
   "generated-form-gone": null;
@@ -309,8 +310,8 @@ export type ContentMessage =
   | { type: "fill-one-time-code"; origin: string; code: string }
   /** Apple Passwords has the generated password filled into this page. */
   | { type: "generated-password-saved"; password: string }
-  /** Shows the browser's passkey list once (see passkey-guard.ts). */
-  | { type: "release-passkey" }
+  /** Shows the browser's passkey list once on the field the menu is on (see passkey-list.ts). */
+  | { type: "menu-show-passkeys"; nonce: string }
   /** Whether the sign-in with the login sent in this tab went through. Answered with a SignInState. */
   | { type: "sign-in-state" };
 
@@ -335,6 +336,11 @@ export type MenuMessage =
   | { type: "menu-typing"; nonce: string; typing: boolean }
   /** Also from the content script: the menu sits above its field, so it lists its items bottom-up. */
   | { type: "menu-placement"; nonce: string; above: boolean }
+  /**
+   * Also from the content script: the browser's passkey list was hidden on the menu's field after
+   * the menu opened (the page tagged it later, as GitHub does), so the menu offers to show it now.
+   */
+  | { type: "menu-passkeys"; nonce: string }
   /** Sent by the background to every extension page when the session unlocks or locks (say, from the popup). */
   | { type: "session-changed"; unlocked: boolean }
   /** Sent by the background when Apple Passwords has a new verification code: list them again. */

@@ -980,6 +980,7 @@ export default defineBackground(() => {
       case "menu-resize":
       case "menu-close":
       case "menu-focus-field":
+      case "menu-show-passkeys":
         await relay(tabOf(caller), request).catch(() => {});
         return null;
       case "get-settings":
@@ -1051,15 +1052,6 @@ export default defineBackground(() => {
       case "open-icloud":
         await browser.tabs.create({ url: "https://www.icloud.com/" });
         return null;
-      case "passkey-state":
-        return { shown: (await getSettings()).passkeyGuard };
-      case "release-passkey": {
-        const tabId = tabOf(caller);
-        // every frame of the page: a frame without a held request shows the list once anyway
-        const frames = await pageFrames(tabId).catch(() => [0]);
-        await Promise.all(frames.map((frameId) => relay(tabId, { type: "release-passkey" }, frameId).catch(() => {})));
-        return null;
-      }
       case "autofill-status":
         throw new Error("content scripts only");
     }
