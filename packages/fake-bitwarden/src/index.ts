@@ -12,7 +12,9 @@ import {
   masterKey,
   masterPasswordHash,
   SERVERS,
+  type Servers,
   type SymmetricKey,
+  serversFor,
   stretch,
 } from "@app/bitwarden";
 import { totp } from "@app/otp";
@@ -37,6 +39,8 @@ export interface FakeBitwardenOptions {
   /** Code emailed for new devices: asked of every device not seen before. */
   newDeviceCode?: string;
   logins?: FakeLogin[];
+  /** A self-hosted server's address: it answers there too, under /identity and /api. */
+  url?: string;
 }
 
 const ACCESS_TTL_S = 3600;
@@ -111,17 +115,22 @@ export class FakeBitwarden {
   async handle(request: Request): Promise<Response> {
     const url = new URL(request.url);
     this.requests.push(`${request.method} ${url.pathname}`);
-    const host = url.origin;
-    const identity = Object.values(SERVERS).some((s) => s.identity === host);
-    const api = Object.values(SERVERS).some((s) => s.api === host);
-    if (identity && url.pathname === "/accounts/prelogin") return this.#prelogin(request);
-    if (identity && url.pathname === "/connect/token") return this.#token(request);
-    if (!api) return json({ message: "Not found" }, 404);
-    if (url.pathname === "/two-factor/send-email-login") return this.#sendEmail(request);
+    const servers: Servers[] = [
+      ...Object.values(SERVERS),
+      ...(this.#options.url ? [serversFor({ url: this.#options.url })] : []),
+    ];
+    const address = `${url.origin}${url.pathname}`;
+    const under = (base: string) => (address.startsWith(`${base}/`) ? address.slice(base.length) : undefined);
+    const identity = servers.map((s) => under(s.identity)).find((path) => path !== undefined);
+    const path = servers.map((s) => under(s.api)).find((path) => path !== undefined);
+    if (identity === "/accounts/prelogin") return this.#prelogin(request);
+    if (identity === "/connect/token") return this.#token(request);
+    if (path === undefined) return json({ message: "Not found" }, 404);
+    if (path === "/two-factor/send-email-login") return this.#sendEmail(request);
     if (this.revoked || !this.#accessTokens.has(bearer(request))) return new Response(null, { status: 401 });
-    if (url.pathname === "/sync" && request.method === "GET") return this.#sync();
-    if (url.pathname === "/ciphers" && request.method === "POST") return this.#saveCipher(request);
-    const update = /^\/ciphers\/([^/]+)$/.exec(url.pathname);
+    if (path === "/sync" && request.method === "GET") return this.#sync();
+    if (path === "/ciphers" && request.method === "POST") return this.#saveCipher(request);
+    const update = /^\/ciphers\/([^/]+)$/.exec(path);
     if (update && request.method === "PUT") return this.#saveCipher(request, update[1]);
     return json({ message: "Not found" }, 404);
   }

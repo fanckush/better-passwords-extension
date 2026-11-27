@@ -992,6 +992,12 @@ export default defineBackground(() => {
       case "bitwarden-sign-in":
         notFromMenu(caller);
         return bitwardenSignIn(request);
+      case "bitwarden-server": {
+        notFromMenu(caller);
+        const account = accounts.get(request.account);
+        if (!(account instanceof BitwardenAccount)) throw new Error("That isn't a Bitwarden account.");
+        return (await account.server()) ?? null;
+      }
       case "bitwarden-send-email-code": {
         notFromMenu(caller);
         const account = createBitwardenAccount("sign-in", async () => 0);

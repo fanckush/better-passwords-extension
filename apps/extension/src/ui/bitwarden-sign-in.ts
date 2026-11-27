@@ -3,16 +3,16 @@
 // page between steps, and is sent only to the background, which signs in.
 
 import "./setup.css";
-import { SELF_HOSTED_ISSUE_URL } from "../config.ts";
-import type { BitwardenRegion, BitwardenSignIn, BitwardenSignInStep } from "../messages.ts";
+import { selfHostedUrl } from "@app/bitwarden";
+import type { BitwardenServer, BitwardenSignIn, BitwardenSignInStep } from "../messages.ts";
 import { send } from "../messages.ts";
 import { bindCodeInput } from "./code-input.ts";
 import { h } from "./h.ts";
 import { providerTile } from "./providers.ts";
 
 export interface BitwardenSignInOptions {
-  /** Signing in again to an account that Bitwarden signed out: its id and email. */
-  account?: { id: string; email?: string };
+  /** Signing in again to an account that Bitwarden signed out: its id, email and server. */
+  account?: { id: string; email?: string; server?: BitwardenServer };
   /** Once signed in, with the account's id: what shows next. */
   done: (account: string) => void;
 }
@@ -56,6 +56,10 @@ function showError(line: HTMLElement, error: unknown) {
   line.hidden = false;
 }
 
+/** Pages the browser lets the extension reach already: any https site, and this computer. */
+const reachable = (url: URL) =>
+  url.protocol === "https:" || url.hostname === "localhost" || url.hostname === "127.0.0.1";
+
 function showForm(root: HTMLElement, options: BitwardenSignInOptions, error?: unknown, filled?: BitwardenSignIn) {
   codeSteps.delete(root);
   const server = h(
@@ -65,6 +69,14 @@ function showForm(root: HTMLElement, options: BitwardenSignInOptions, error?: un
     h("option", { value: "eu", textContent: "bitwarden.eu" }),
     h("option", { value: "self-hosted", textContent: "Self-hosted" }),
   );
+  const address = h("input", {
+    type: "text",
+    name: "url",
+    inputMode: "url",
+    attrs: { autocomplete: "url" },
+    spellcheck: false,
+    placeholder: "vault.example.com",
+  });
   const email = h("input", {
     type: "email",
     name: "email",
@@ -79,45 +91,62 @@ function showForm(root: HTMLElement, options: BitwardenSignInOptions, error?: un
     autocomplete: "current-password",
     value: filled?.password ?? "",
   });
-  if (filled) server.value = filled.region;
+  const chosen = filled?.server ?? options.account?.server;
+  if (typeof chosen === "object") {
+    server.value = "self-hosted";
+    address.value = chosen.url;
+  } else if (chosen) server.value = chosen;
   const submit = h("button", { class: "button primary", type: "submit", textContent: "Sign In" });
   const problem = errorLine();
   if (error) showError(problem, error);
 
-  const selfHosted = h(
-    "p",
-    { class: "note", hidden: true },
-    "Self-hosted servers aren't supported yet. ",
-    h("a", { href: SELF_HOSTED_ISSUE_URL, target: "_blank", rel: "noopener", textContent: "Ask for them on GitHub" }),
-  );
-  const fields = [email, password, submit];
+  const addressField = field("Server address", address);
+  const showAddress = () => {
+    const selfHosted = server.value === "self-hosted";
+    addressField.hidden = !selfHosted;
+    address.required = selfHosted;
+  };
+  showAddress();
   server.addEventListener("change", () => {
-    const unsupported = server.value === "self-hosted";
-    selfHosted.hidden = !unsupported;
-    for (const input of fields) input.disabled = unsupported;
+    showAddress();
+    if (!addressField.hidden) address.focus();
   });
+  const fields = [server, address, email, password, submit];
 
   const form = h(
     "form",
     { class: "form" },
     field("Server", server),
+    addressField,
     field("Email", email),
     field("Master password", password),
     problem,
-    selfHosted,
     submit,
   );
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     problem.hidden = true;
+    let chosen: BitwardenServer;
+    // asked for at once: the browser shows its prompt only while handling the click
+    let allowed: Promise<boolean> = Promise.resolve(true);
+    try {
+      if (server.value === "self-hosted") {
+        const url = selfHostedUrl(address.value);
+        address.value = url;
+        chosen = { url };
+        const origin = new URL(url);
+        if (!reachable(origin)) allowed = browser.permissions.request({ origins: [`${origin.origin}/*`] });
+      } else chosen = server.value as BitwardenServer;
+    } catch (e) {
+      showError(problem, e);
+      address.select();
+      return;
+    }
     for (const input of fields) input.disabled = true;
     submit.textContent = "Signing In…";
-    const request: BitwardenSignIn = {
-      region: server.value as BitwardenRegion,
-      email: email.value.trim(),
-      password: password.value,
-    };
+    const request: BitwardenSignIn = { server: chosen, email: email.value.trim(), password: password.value };
     try {
+      if (!(await allowed)) throw new Error("Allow access to your server to sign in to it.");
       await next(root, options, request, await signIn(options, request));
     } catch (e) {
       showError(problem, e);
@@ -179,7 +208,7 @@ async function next(
   async function emailCode(address: string | undefined) {
     await send({
       type: "bitwarden-send-email-code",
-      region: request.region,
+      server: request.server,
       email: request.email,
       password: request.password,
     });

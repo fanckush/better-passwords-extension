@@ -84,9 +84,18 @@ async function showApple(status: Status | undefined, back?: () => unknown) {
   showFlow(flow, back);
 }
 
-function showBitwarden(account?: AccountView, back?: () => unknown) {
+async function showBitwarden(account?: AccountView, back?: () => unknown) {
+  const server = account ? await send({ type: "bitwarden-server", account: account.id }).catch(() => null) : null;
   const flow = bitwardenSignIn({
-    ...(account ? { account: { id: account.id, ...(account.detail ? { email: account.detail } : {}) } } : {}),
+    ...(account
+      ? {
+          account: {
+            id: account.id,
+            ...(account.detail ? { email: account.detail } : {}),
+            ...(server ? { server } : {}),
+          },
+        }
+      : {}),
     done: (id) => void toAccounts(id),
   });
   showFlow(flow.element, back, flow.back);
@@ -117,7 +126,7 @@ function accountRow(account: AccountView, added: boolean): HTMLElement {
     const remove = button("Remove", "quiet", confirm);
     remove.setAttribute("aria-label", `Remove ${[account.label, account.detail].filter(Boolean).join(" ")}`);
     actions.replaceChildren(
-      ...(signedOut ? [button("Sign In", "quiet accent", () => showBitwarden(account, () => toAccounts()))] : []),
+      ...(signedOut ? [button("Sign In", "quiet accent", () => void showBitwarden(account, () => toAccounts()))] : []),
       ...(added ? [h("span", { class: "check", title: "Added" }, icon(CHECK))] : []),
       remove,
     );
@@ -166,7 +175,7 @@ function showAccounts(status: Status | undefined, added?: string) {
     choose: (id) => {
       const back = () => toAccounts();
       if (id === "apple") void showApple(status, back);
-      else showBitwarden(undefined, back);
+      else void showBitwarden(undefined, back);
     },
   });
   let root: HTMLElement;

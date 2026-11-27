@@ -8,8 +8,9 @@ import { DISPLAY_NAME, EXTENSION_PUBLIC_KEY, FILL_MATCHES, FIREFOX_EXTENSION_ID,
 const EXTENSION_CSP =
   // wasm: Argon2id, for Bitwarden accounts that derive their key with it (hash-wasm)
   "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; img-src 'self' data:; " +
-  // iCloud for Hide My Email; Bitwarden's cloud servers (US and EU) for Bitwarden accounts
-  "connect-src 'self' https://*.icloud.com https://*.bitwarden.com https://*.bitwarden.eu; " +
+  // iCloud for Hide My Email; Bitwarden's servers, which may be self-hosted anywhere (on a home
+  // network, over plain http). `script-src` is what keeps other code out of the extension.
+  "connect-src 'self' https: http:; " +
   "frame-src 'self' betterpasswords:";
 
 export default defineConfig({
@@ -83,6 +84,11 @@ export default defineConfig({
       ],
       // the inline menu reads the page's URL and runs on login pages
       host_permissions: FILL_MATCHES,
+      // a self-hosted Bitwarden server on plain http, asked for (that server only) when signing in;
+      // Firefox's build is MV2, which lists hosts with the other permissions
+      ...(browser === "firefox"
+        ? { optional_permissions: ["http://*/*"] }
+        : { optional_host_permissions: ["http://*/*"] }),
       // Chromium: reachable only at a per-session URL, so pages can't load (or probe for) the menu
       web_accessible_resources: [
         {
@@ -93,8 +99,7 @@ export default defineConfig({
         },
       ],
       action: { default_title: DISPLAY_NAME },
-      // Extension pages and the worker load only our own code and reach only iCloud (Hide My
-      // Email) and Bitwarden, so a future bug or a hijacked dependency can't send data anywhere else.
+      // Extension pages and the worker load only our own code: no remote, inline or eval'd scripts.
       content_security_policy: browser === "firefox" ? EXTENSION_CSP : { extension_pages: EXTENSION_CSP },
       ...(browser === "firefox"
         ? {

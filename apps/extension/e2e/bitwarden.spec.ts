@@ -12,9 +12,10 @@ const setupUrl = `chrome-extension://${EXTENSION_ID}/setup.html`;
 
 test.use({ setUp: false });
 
-/** Answers the extension's requests to Bitwarden's servers with `server`. */
-async function routeBitwarden(context: BrowserContext, server: FakeBitwarden) {
-  await context.route(/^https:\/\/(identity|api)\.bitwarden\.com\//, async (route) => {
+/** Answers the extension's requests to Bitwarden's servers (or `url`, a self-hosted one) with `server`. */
+async function routeBitwarden(context: BrowserContext, server: FakeBitwarden, url?: string) {
+  const pattern = url ? `${url}/**` : /^https:\/\/(identity|api)\.bitwarden\.com\//;
+  await context.route(pattern, async (route) => {
     const request = route.request();
     const body = request.method() === "GET" ? null : request.postDataBuffer();
     const answer = await server.handle(
@@ -59,7 +60,7 @@ async function extensionPage(context: BrowserContext, popupUrl: string) {
 async function signedIn(context: BrowserContext, siteUrl: string, popupUrl: string) {
   const server = await fakeBitwarden(context, siteUrl);
   const { page, send } = await extensionPage(context, popupUrl);
-  const step = await send({ type: "bitwarden-sign-in", region: "us", email: server.email, password: server.password });
+  const step = await send({ type: "bitwarden-sign-in", server: "us", email: server.email, password: server.password });
   expect(step).toMatchObject({ status: "signed-in" });
   return { server, popup: page, send, account: (step as { account: string }).account };
 }
@@ -130,7 +131,7 @@ test("asks which password manager in the popup, before anything is set up", asyn
   await expect(popup.getByText("Which password manager do you use?")).toBeVisible();
 });
 
-test("refuses a wrong master password, and self-hosted servers", async ({ context, siteUrl }) => {
+test("refuses a wrong master password", async ({ context, siteUrl }) => {
   const server = await fakeBitwarden(context, siteUrl);
   const setup = await context.newPage();
   await setup.goto(`${setupUrl}#bitwarden`);
@@ -138,9 +139,44 @@ test("refuses a wrong master password, and self-hosted servers", async ({ contex
   await setup.getByLabel("Master password").fill("not it");
   await setup.getByRole("button", { name: "Sign In" }).click();
   await expect(setup.getByText("Wrong email or master password.")).toBeVisible();
-  await setup.getByLabel("Server").selectOption("self-hosted");
-  await expect(setup.getByText("Self-hosted servers aren't supported yet.")).toBeVisible();
-  await expect(setup.getByRole("button", { name: "Sign In" })).toBeDisabled();
+});
+
+test("signs in to a self-hosted server, and again there once signed out", async ({ context, siteUrl, popupUrl }) => {
+  const url = "https://vault.example.test";
+  const server = await FakeBitwarden.create({
+    url,
+    logins: [{ name: "Test site", username: "bw-alice", password: "bw-pass", uris: [siteUrl] }],
+  });
+  await routeBitwarden(context, server, url);
+  const setup = await context.newPage();
+  await setup.goto(`${setupUrl}#bitwarden`);
+  await expect(setup.getByLabel("Server address")).toBeHidden();
+  await setup.locator("select[name=server]").selectOption("self-hosted");
+  await setup.getByLabel("Server address").fill("vault.example.test/");
+  await setup.getByLabel("Email").fill(server.email);
+  await setup.getByLabel("Master password").fill(server.password);
+  await setup.getByRole("button", { name: "Sign In" }).click();
+  await expect(setup.getByText("Bitwarden is ready.")).toBeVisible();
+  expect(server.requests).toContain("POST /identity/connect/token");
+
+  const page = await context.newPage();
+  await page.goto(`${siteUrl}/login.html`);
+  await fillFromMenu(page, "bw-alice");
+  await expect(page.locator("#pass")).toHaveValue("bw-pass");
+
+  // signed out by the server (noticed on the sync after unlocking): signing in again goes back to it
+  const { send } = await extensionPage(context, popupUrl);
+  const status = (await send({ type: "get-status" })) as { accounts: { id: string; provider: string }[] };
+  const account = status.accounts.find((a) => a.provider === "bitwarden")?.id;
+  server.revoked = true;
+  await send({ type: "lock", account });
+  await send({ type: "unlock-with-password", account, password: server.password });
+  await setup.goto(`${setupUrl}#accounts`);
+  await expect.poll(() => setup.reload().then(() => setup.getByText(/Signed out/).count())).toBe(1);
+  await setup.getByRole("button", { name: "Sign In" }).click();
+  await expect(setup.getByRole("heading", { name: "Sign In to Bitwarden Again" })).toBeVisible();
+  await expect(setup.locator("select[name=server]")).toHaveValue("self-hosted");
+  await expect(setup.getByLabel("Server address")).toHaveValue(url);
 });
 
 test("asks on the page before saving a new login to Bitwarden", async ({ context, siteUrl, popupUrl }) => {

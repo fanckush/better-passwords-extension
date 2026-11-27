@@ -270,6 +270,10 @@
   color: var(--text-secondary);
 }
 
+.setup .field[hidden] {
+  display: none;
+}
+
 .setup .field input,
 .setup .field select {
   width: 100%;

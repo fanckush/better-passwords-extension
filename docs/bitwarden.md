@@ -11,11 +11,21 @@ Bitwarden has no local app we can ask for logins, the way Apple's helper answers
 | US | `https://identity.bitwarden.com` | `https://api.bitwarden.com` |
 | EU | `https://identity.bitwarden.eu` | `https://api.bitwarden.eu` |
 
-Self-hosted servers (and Vaultwarden) aren't supported yet. The extension's CSP allows only the two regions above.
+**Self-hosted** (Bitwarden's own server, or Vaultwarden): the user types the web vault's address. Identity and API are served under it, as Bitwarden's own clients assume when only a server URL is given:
+
+| | Address |
+|---|---|
+| Identity | `{base}/identity` |
+| API | `{base}/api` |
+| Web vault | `{base}` |
+
+The address is made canonical before use (`selfHostedUrl`): `https://` when no scheme is typed, no trailing slash, query or `#/` route. Plain `http://` works too (a home server, or one reached over Tailscale). A prelogin that answers 404, or with something that isn't JSON, means there's no Bitwarden server at that address. *Tested only against the fake server (packages/fake-bitwarden), not a real Vaultwarden yet.*
 
 Every request carries `Bitwarden-Client-Name: browser`, `Bitwarden-Client-Version` and `Device-Type`. The token endpoint is rate-limited (about 10 requests a minute).
 
-**CORS:** the servers' preflight answers extension origins with `Access-Control-Allow-Origin: null`. The background worker gets around this with the extension's host permissions (`https://*/*`). Tested in a Chromium MV3 build: sign-in with two-step login, sync, unlock and fill all worked. *Firefox not tested yet.*
+**CORS:** the servers' preflight answers extension origins with `Access-Control-Allow-Origin: null`. The background worker gets around this with the extension's host permissions (`https://*/*`). Tested in a Chromium MV3 build: sign-in with two-step login, sync, unlock and fill all worked. *Firefox not tested yet.* An `http://` self-hosted server isn't covered by those, so the sign-in form asks for that one origin (`optional_host_permissions: http://*/*`, `optional_permissions` in Firefox's MV2 build) when the user signs in.
+
+**CSP:** `connect-src` is `'self' https: http:`, since a self-hosted server can be anywhere. It used to list only iCloud and Bitwarden's cloud. That was defense in depth against injected code sending data out, but injected code can already do that other ways (opening a tab, a content script's request, the native host). What keeps other code out is `script-src 'self'`: no remote, inline or eval'd scripts.
 
 **New devices:** every new `deviceIdentifier` makes Bitwarden email the account owner about a new device. The extension keeps one per install (`bitwardenDeviceId` in storage).
 

@@ -1,4 +1,4 @@
-import { BitwardenClient, type Region } from "@app/bitwarden";
+import { BitwardenClient, type Server } from "@app/bitwarden";
 import { FakeBitwarden, type FakeBitwardenOptions } from "@app/fake-bitwarden";
 import { totp } from "@app/otp";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
   type BitwardenStore,
   type UnlockedKey,
 } from "../src/accounts/bitwarden/account.ts";
+import { withServer } from "../src/accounts/bitwarden/index.ts";
 
 const SECRET = "JBSWY3DPEHPK3PXP";
 const LOGINS = [
@@ -52,9 +53,9 @@ async function setUp(options: FakeBitwardenOptions = { logins: LOGINS }, lockAft
   const make = () =>
     new BitwardenAccount("bw", {
       store,
-      client: async (region: Region) =>
+      client: async (where: Server) =>
         new BitwardenClient({
-          region,
+          server: where,
           deviceId: "device",
           deviceType: 2,
           deviceName: "test",
@@ -68,7 +69,7 @@ async function setUp(options: FakeBitwardenOptions = { logins: LOGINS }, lockAft
       },
     });
   const account = make();
-  const credentials = { region: "us" as const, email: server.email, password: server.password };
+  const credentials = { server: "us" as const, email: server.email, password: server.password };
   return { server, store, clock, account, make, credentials, opened };
 }
 
@@ -225,17 +226,37 @@ describe("BitwardenAccount", () => {
     expect(store.key).toBeUndefined();
   });
 
-  it("opens the web vault of its region, searching for the page's site", async () => {
+  it("opens the web vault of its server, searching for the page's site", async () => {
     const { account, opened, store, make } = await signedIn();
     await account.openApp("https://www.example.com/login");
     await account.openApp();
-    if (store.record) store.record.region = "eu";
+    if (store.record) store.record.server = "eu";
     await make().openApp("https://github.com/");
     expect(opened).toEqual([
       "https://vault.bitwarden.com/#/vault?search=example.com",
       "https://vault.bitwarden.com/#/vault",
       "https://vault.bitwarden.eu/#/vault?search=github.com",
     ]);
+  });
+
+  it("signs in to a self-hosted server, and opens its web vault", async () => {
+    const { account, opened, store, server } = await setUp({ logins: LOGINS, url: "https://vault.example.net/bw" });
+    const self = { url: "https://vault.example.net/bw" };
+    expect(await account.signIn({ ...{ email: server.email, password: server.password }, server: self })).toEqual({
+      status: "signed-in",
+    });
+    expect(store.record?.server).toEqual(self);
+    expect(await account.server()).toEqual(self);
+    expect(server.requests).toContain("POST /bw/identity/connect/token");
+    expect(server.requests).toContain("GET /bw/api/sync");
+    await account.openApp("https://example.com/");
+    expect(opened).toEqual(["https://vault.example.net/bw/#/vault?search=example.com"]);
+  });
+
+  it("reads records saved with a region as on that server", () => {
+    expect(withServer(undefined)).toBeUndefined();
+    expect(withServer({ region: "eu", email: "a@b.c" })).toEqual({ server: "eu", email: "a@b.c" });
+    expect(withServer({ server: { url: "https://x.test" } })).toEqual({ server: { url: "https://x.test" } });
   });
 
   it("forgets everything when removed", async () => {

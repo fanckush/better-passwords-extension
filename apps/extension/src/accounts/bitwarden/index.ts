@@ -1,7 +1,7 @@
 // Wires a BitwardenAccount into the browser: its storage (on disk, and in memory for the unlocked
 // key), this install's device id, and Argon2id for accounts that use it.
 
-import { BitwardenClient, type Region } from "@app/bitwarden";
+import { BitwardenClient, type Server } from "@app/bitwarden";
 import { argon2id } from "hash-wasm";
 import { BITWARDEN_CLIENT_VERSION, DISPLAY_NAME } from "../../config.ts";
 import { BitwardenAccount, type BitwardenRecord, type UnlockedKey } from "./account.ts";
@@ -38,11 +38,11 @@ const argon2 = async (input: {
     }),
   );
 
-export function bitwardenClient(region: Region): Promise<BitwardenClient> {
+export function bitwardenClient(server: Server): Promise<BitwardenClient> {
   return deviceId().then(
     (id) =>
       new BitwardenClient({
-        region,
+        server,
         deviceId: id,
         // Bitwarden's device types: 2 for a Chrome extension, 3 for Firefox
         deviceType: import.meta.env.FIREFOX ? 3 : 2,
@@ -51,6 +51,13 @@ export function bitwardenClient(region: Region): Promise<BitwardenClient> {
         argon2,
       }),
   );
+}
+
+/** A stored record; those saved before self-hosted servers have a `region` instead of a `server`. */
+export function withServer(stored: unknown): BitwardenRecord | undefined {
+  if (!stored) return undefined;
+  const { region, ...record } = stored as BitwardenRecord & { region?: Server };
+  return { ...record, server: record.server ?? region ?? "us" };
 }
 
 export function createBitwardenAccount(id: string, lockAfterMinutes: () => Promise<number>): BitwardenAccount {
@@ -64,7 +71,7 @@ export function createBitwardenAccount(id: string, lockAfterMinutes: () => Promi
       await browser.tabs.create({ url });
     },
     store: {
-      load: async () => (await browser.storage.local.get(recordKey))[recordKey] as BitwardenRecord | undefined,
+      load: async () => withServer((await browser.storage.local.get(recordKey))[recordKey]),
       save: (record) => browser.storage.local.set({ [recordKey]: record }),
       loadKey: async () => (await browser.storage.session.get(sessionKey))[sessionKey] as UnlockedKey | undefined,
       saveKey: (key) => browser.storage.session.set({ [sessionKey]: key }),

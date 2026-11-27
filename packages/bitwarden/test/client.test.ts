@@ -1,13 +1,21 @@
 import { FakeBitwarden } from "@app/fake-bitwarden";
 import { totp } from "@app/otp";
 import { describe, expect, it } from "vitest";
-import { BitwardenClient, decryptVault, newLoginRequest, newPasswordRequest, openUserKey } from "../src/index.ts";
+import {
+  BitwardenClient,
+  decryptVault,
+  newLoginRequest,
+  newPasswordRequest,
+  openUserKey,
+  selfHostedUrl,
+  serversFor,
+} from "../src/index.ts";
 
 const LOGIN = { name: "Example", username: "alice", password: "pw-alice", uris: ["https://example.com/login"] };
 
 function clientFor(server: FakeBitwarden, deviceId = crypto.randomUUID()) {
   return new BitwardenClient({
-    region: "us",
+    server: "us",
     deviceId,
     deviceType: 2,
     deviceName: "chrome",
@@ -92,7 +100,7 @@ describe("signing in", () => {
 
   it("says when Bitwarden can't be reached", async () => {
     const client = new BitwardenClient({
-      region: "eu",
+      server: "eu",
       deviceId: "d",
       deviceType: 2,
       deviceName: "chrome",
@@ -156,5 +164,70 @@ describe("saving", () => {
     await expect(
       client.updateCipher(account.tokens.accessToken, cipher.id, await newPasswordRequest(cipher, "pw-other", keys)),
     ).rejects.toMatchObject({ code: "out-of-date" });
+  });
+});
+
+describe("self-hosted servers", () => {
+  it("makes typed addresses canonical", () => {
+    expect(selfHostedUrl("vault.example.com")).toBe("https://vault.example.com");
+    expect(selfHostedUrl("  https://vault.example.com/  ")).toBe("https://vault.example.com");
+    expect(selfHostedUrl("https://example.com/bitwarden/#/login")).toBe("https://example.com/bitwarden");
+    expect(selfHostedUrl("http://192.168.1.10:8080")).toBe("http://192.168.1.10:8080");
+    expect(selfHostedUrl("HTTPS://Vault.Example.com:8443/?x=1")).toBe("https://vault.example.com:8443");
+    for (const bad of ["", "ftp://example.com", "https://user:pw@example.com", "javascript:alert(1)", "http://"]) {
+      expect(() => selfHostedUrl(bad), bad).toThrow("That isn't a server address.");
+    }
+  });
+
+  it("serves identity and API under the web vault's address", () => {
+    expect(serversFor({ url: "https://example.com/bw/" })).toEqual({
+      identity: "https://example.com/bw/identity",
+      api: "https://example.com/bw/api",
+      vault: "https://example.com/bw",
+    });
+    expect(serversFor("eu").api).toBe("https://api.bitwarden.eu");
+  });
+
+  it("signs in and syncs against a self-hosted server", async () => {
+    const url = "https://vault.example.net";
+    const server = await FakeBitwarden.create({ logins: [LOGIN], url });
+    const client = new BitwardenClient({
+      server: { url },
+      deviceId: "d",
+      deviceType: 2,
+      deviceName: "chrome",
+      clientVersion: "test",
+      fetch: server.fetch,
+    });
+    const result = await client.signIn({ email: server.email, password: server.password });
+    if (result.status !== "signed-in") throw new Error(result.status);
+    expect((await client.sync(result.account.tokens.accessToken)).ciphers).toHaveLength(1);
+    expect(server.requests).toEqual([
+      "POST /identity/accounts/prelogin",
+      "POST /identity/connect/token",
+      "GET /api/sync",
+    ]);
+  });
+
+  it("says when there's no Bitwarden server at the address", async () => {
+    const options = { deviceId: "d", deviceType: 2, deviceName: "chrome", clientVersion: "test" };
+    const page = new BitwardenClient({
+      ...options,
+      server: { url: "https://example.com" },
+      fetch: async () => new Response("<!doctype html><p>Hello", { headers: { "Content-Type": "text/html" } }),
+    });
+    await expect(page.prelogin("a@b.c")).rejects.toThrow("No Bitwarden server answered at that address.");
+    const missing = new BitwardenClient({
+      ...options,
+      server: { url: "https://example.com" },
+      fetch: async () => new Response("Not found", { status: 404 }),
+    });
+    await expect(missing.prelogin("a@b.c")).rejects.toThrow("No Bitwarden server answered at that address.");
+    const offline = new BitwardenClient({
+      ...options,
+      server: { url: "https://example.com" },
+      fetch: () => Promise.reject(new TypeError("Failed to fetch")),
+    });
+    await expect(offline.prelogin("a@b.c")).rejects.toThrow("Couldn't reach your server.");
   });
 });

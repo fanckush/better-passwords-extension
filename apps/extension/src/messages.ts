@@ -10,7 +10,8 @@ import type { FieldRules, PasswordStyle, Strength, Suggestion } from "./password
 /** The port the popup holds while it's on screen, so the background knows whether it's closed. */
 export const POPUP_PORT = "popup";
 
-export type BitwardenRegion = "us" | "eu";
+/** Bitwarden's cloud ("us", "eu"), or a self-hosted server by its address. */
+export type BitwardenServer = "us" | "eu" | { url: string };
 
 /** What the save card asks about: a new login, or a new password for a saved one. */
 export interface SaveCardDetails {
@@ -24,7 +25,7 @@ export interface SaveCardDetails {
 export type SaveCardAnswer = "save" | "not-now" | "never";
 
 export interface BitwardenSignIn {
-  region: BitwardenRegion;
+  server: BitwardenServer;
   email: string;
   password: string;
   twoFactor?: { provider: number; code: string; remember?: boolean };
@@ -64,8 +65,10 @@ export type Request =
    * ask for), or the account signed in. Never from the inline menu.
    */
   | ({ type: "bitwarden-sign-in"; account?: string } & BitwardenSignIn)
+  /** The server a Bitwarden account signs in to (null: not known), to sign in there again. */
+  | { type: "bitwarden-server"; account: string }
   /** Asks Bitwarden to email a two-step login code. */
-  | { type: "bitwarden-send-email-code"; region: BitwardenRegion; email: string; password: string }
+  | { type: "bitwarden-send-email-code"; server: BitwardenServer; email: string; password: string }
   /** Removes an account from this browser: it's locked, and signed out if it signs in. */
   | { type: "remove-account"; account: string }
   // the save card (save.html), with the nonce the background gave its tab's content script
@@ -339,6 +342,7 @@ interface Responses {
   /** `unlock`: the account the inline menu asked to unlock, which the popup opens to. */
   "popup-intent": { hideMyEmailConsent: boolean; unlock?: string };
   "bitwarden-sign-in": BitwardenSignInStep;
+  "bitwarden-server": BitwardenServer | null;
   "bitwarden-send-email-code": null;
   "add-account": Status;
   "list-accounts": AccountView[];

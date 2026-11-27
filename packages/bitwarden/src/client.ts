@@ -6,6 +6,18 @@ import { type Argon2id, type KdfConfig, masterKey, masterPasswordHash } from "./
 
 export type Region = "us" | "eu";
 
+/**
+ * Where an account lives: a region of Bitwarden's cloud, or a self-hosted server (Bitwarden's own,
+ * or Vaultwarden) by the address of its web vault (see `selfHostedUrl`).
+ */
+export type Server = Region | { url: string };
+
+export interface Servers {
+  identity: string;
+  api: string;
+  vault: string;
+}
+
 /** `fetch`, as far as the client uses it. */
 export type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -19,7 +31,7 @@ interface Request {
   empty?: boolean;
 }
 
-export const SERVERS: Record<Region, { identity: string; api: string; vault: string }> = {
+export const SERVERS: Record<Region, Servers> = {
   us: {
     identity: "https://identity.bitwarden.com",
     api: "https://api.bitwarden.com",
@@ -32,12 +44,42 @@ export const SERVERS: Record<Region, { identity: string; api: string; vault: str
   },
 };
 
+/** The addresses of a server: a self-hosted one serves identity and API under its web vault's. */
+export function serversFor(server: Server): Servers {
+  if (typeof server === "string") return SERVERS[server];
+  const base = selfHostedUrl(server.url);
+  return { identity: `${base}/identity`, api: `${base}/api`, vault: base };
+}
+
+/** Whether `server` is one of Bitwarden's own (cloud) regions. */
+export function isCloud(server: Server): server is Region {
+  return typeof server === "string";
+}
+
+/**
+ * A self-hosted server's address as typed, made canonical: https:// when no scheme is given, and
+ * without a trailing slash, query or web vault route (`/#/login`). Throws when it isn't one.
+ */
+export function selfHostedUrl(input: string): string {
+  const typed = input.trim();
+  let url: URL;
+  try {
+    url = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(typed) ? typed : `https://${typed}`);
+  } catch {
+    throw new BitwardenError("That isn't a server address.", "unsupported");
+  }
+  if ((url.protocol !== "https:" && url.protocol !== "http:") || !url.hostname || url.username || url.password) {
+    throw new BitwardenError("That isn't a server address.", "unsupported");
+  }
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}
+
 /** Two-step login methods, by Bitwarden's numbers. Only those we can answer have names. */
 export const TwoFactorProvider = { Authenticator: 0, Email: 1, Duo: 2, YubiKey: 3, WebAuthn: 7 } as const;
 export type TwoFactorProviderId = number;
 
 export interface ClientOptions {
-  region: Region;
+  server: Server;
   /** A UUID kept per install: Bitwarden lists signed-in devices by it. */
   deviceId: string;
   /** 2 for a Chromium extension, 3 for Firefox's. */
@@ -157,11 +199,11 @@ export interface CipherRequest {
 
 export class BitwardenClient {
   readonly #fetch: Fetch;
-  readonly #servers: (typeof SERVERS)[Region];
+  readonly #servers: Servers;
 
   constructor(private readonly options: ClientOptions) {
     this.#fetch = options.fetch ?? ((url, init) => fetch(url, init));
-    this.#servers = SERVERS[options.region];
+    this.#servers = serversFor(options.server);
   }
 
   get servers() {
@@ -178,6 +220,13 @@ export class BitwardenClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }),
+    }).catch((error: unknown) => {
+      // a self-hosted address that's something else: a 404, or a web page instead of JSON
+      const notFound = !(error instanceof BitwardenError) || (error.code === "server" && error.status === 404);
+      if (notFound && !isCloud(this.options.server)) {
+        throw new BitwardenError("No Bitwarden server answered at that address.", "server", 404);
+      }
+      throw error;
     });
     if (body.kdf !== 0 && body.kdf !== 1)
       throw new BitwardenError("This account's key settings aren't supported.", "unsupported");
@@ -322,7 +371,12 @@ export class BitwardenClient {
         },
       });
     } catch {
-      throw new BitwardenError("Couldn't reach Bitwarden. Check your connection.", "network");
+      throw new BitwardenError(
+        isCloud(this.options.server)
+          ? "Couldn't reach Bitwarden. Check your connection."
+          : "Couldn't reach your server. Check its address and your connection.",
+        "network",
+      );
     }
   }
 }

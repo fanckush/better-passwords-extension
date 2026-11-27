@@ -59,6 +59,3 @@ export const BITWARDEN_CLIENT_VERSION = "2025.11.0";
 
 /** Where people ask for another password manager (.github/ISSUE_TEMPLATE/password-manager.yml). */
 export const OTHER_PROVIDER_ISSUE_URL = `${REPO_URL}/issues/new?template=password-manager.yml`;
-
-/** Where people ask for self-hosted Bitwarden (and Vaultwarden) support. */
-export const SELF_HOSTED_ISSUE_URL = `${REPO_URL}/issues/new?title=${encodeURIComponent("Support self-hosted Bitwarden")}`;

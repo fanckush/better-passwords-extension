@@ -1,4 +1,4 @@
-// A Bitwarden account (bitwarden.com or .eu) as an Account. Bitwarden has no app on the computer we
+// A Bitwarden account (bitwarden.com, .eu, or a self-hosted server) as an Account. Bitwarden has no app on the computer we
 // could ask, so the extension is the client: it signs in, keeps the vault as Bitwarden sends it
 // (encrypted) and decrypts it in memory once the master password opens the user key.
 //
@@ -19,11 +19,11 @@ import {
   newLoginRequest,
   newPasswordRequest,
   openUserKey,
-  type Region,
-  SERVERS,
+  type Server,
   type SignInRequest,
   type SymmetricKey,
   type SyncData,
+  serversFor,
   symmetricKey,
   type Tokens,
   toBase64,
@@ -46,12 +46,12 @@ export const BITWARDEN_PROVIDER = "bitwarden";
 
 /** What's kept on disk for a Bitwarden account. Nothing in it opens the vault without the master password. */
 export interface BitwardenRecord {
-  region: Region;
+  server: Server;
   email: string;
   kdf: KdfConfig;
   /** The user key, wrapped with the master password's key. */
   protectedUserKey: string;
-  /** Null once Bitwarden signed this browser out: the email and region stay, to sign in again. */
+  /** Null once Bitwarden signed this browser out: the email and server stay, to sign in again. */
   tokens: Tokens | null;
   /** The vault as /sync gave it, encrypted. */
   vault: SyncData | null;
@@ -81,7 +81,7 @@ export interface BitwardenStore {
 
 export interface BitwardenDeps {
   store: BitwardenStore;
-  client(region: Region): Promise<BitwardenClient>;
+  client(server: Server): Promise<BitwardenClient>;
   /** The account's "lock after" setting, in minutes (0: never while the browser runs). */
   lockAfterMinutes(): Promise<number>;
   argon2?: Parameters<typeof masterKey>[3];
@@ -136,6 +136,11 @@ export class BitwardenAccount implements Account {
     return this.#record?.email;
   }
 
+  /** The server it signs in to, to sign in there again. */
+  async server(): Promise<Server | undefined> {
+    return (this.#record ?? (await this.deps.store.load()))?.server;
+  }
+
   get status(): AccountStatus {
     return this.#status;
   }
@@ -187,14 +192,14 @@ export class BitwardenAccount implements Account {
    * Signs in (again): Bitwarden may ask for a two-step code or, for a new device, an emailed one;
    * the caller asks the user and calls again with the same request plus the code.
    */
-  async signIn(request: SignInRequest & { region: Region }): Promise<SignInStep> {
-    const client = await this.deps.client(request.region);
+  async signIn(request: SignInRequest & { server: Server }): Promise<SignInStep> {
+    const client = await this.deps.client(request.server);
     const result = await client.signIn(request);
     if (result.status !== "signed-in") return result;
     const { account } = result;
     const user = await openUserKey(account.protectedUserKey, account.masterKey);
     const record: BitwardenRecord = {
-      region: request.region,
+      server: request.server,
       email: request.email.trim().toLowerCase(),
       kdf: account.kdf,
       protectedUserKey: account.protectedUserKey,
@@ -210,8 +215,8 @@ export class BitwardenAccount implements Account {
   }
 
   /** Asks Bitwarden to email a two-step code, for accounts that use email codes. */
-  async sendEmailCode(request: { region: Region; email: string; password: string }): Promise<void> {
-    const client = await this.deps.client(request.region);
+  async sendEmailCode(request: { server: Server; email: string; password: string }): Promise<void> {
+    const client = await this.deps.client(request.server);
     await client.sendEmailCode(request.email, request.password, await client.prelogin(request.email));
   }
 
@@ -287,10 +292,10 @@ export class BitwardenAccount implements Account {
     await this.#save(login, true);
   }
 
-  /** The web vault of the account's region, searching for the page's site (its `search` parameter). */
+  /** The web vault of the account's server, searching for the page's site (its `search` parameter). */
   async openApp(url?: string): Promise<void> {
     const record = this.#record ?? (await this.deps.store.load());
-    const vault = SERVERS[record?.region ?? "us"].vault;
+    const vault = serversFor(record?.server ?? "us").vault;
     const site = url ? new URL(url).hostname.replace(/^www\./, "") : "";
     await this.deps.openTab?.(`${vault}/#/vault${site ? `?search=${encodeURIComponent(site)}` : ""}`);
   }
@@ -427,7 +432,7 @@ export class BitwardenAccount implements Account {
   #client(): Promise<BitwardenClient> {
     const record = this.#record;
     if (!record) return Promise.reject(new Error("Sign in to Bitwarden first."));
-    return this.deps.client(record.region);
+    return this.deps.client(record.server);
   }
 
   /** Calls Bitwarden with a fresh access token, refreshing it first, or once more after a 401. */
