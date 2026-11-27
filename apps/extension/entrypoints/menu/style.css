@@ -14,16 +14,26 @@ body {
   overscroll-behavior: none;
 }
 
-.panel {
-  margin: 0;
-  padding: 5px;
+/* the border and background fill the whole frame, which is a spare pixel taller than the list (see
+   reportSize): on the list itself, its bottom border would sit above the frame's edge, a double line */
+html {
+  height: 100%;
   border: 1px solid var(--separator);
   border-radius: 10px;
   background: var(--surface);
+}
+
+body {
+  height: 100%;
+}
+
+.panel {
+  margin: 0;
+  padding: 5px;
   display: grid;
   gap: 1px;
   /* the frame is capped (see MenuHost), so long lists scroll inside it, without scrolling the page */
-  max-height: 100vh;
+  max-height: 100%;
   overflow-y: auto;
   /* stop at the ends, without the elastic bounce: it's a dropdown */
   overscroll-behavior: none;

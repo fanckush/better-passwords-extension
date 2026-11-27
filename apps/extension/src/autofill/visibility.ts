@@ -27,8 +27,15 @@ function styleHidesContent(style: CSSStyleDeclaration): boolean {
   );
 }
 
-/** True if `host` is open, fully opaque all the way up, and topmost across its whole area. */
-export function isMenuGenuinelyVisible(host: HTMLElement, view: Window = window): boolean {
+/**
+ * True if `host` is open, fully opaque all the way up, and topmost across its whole area. `ours`:
+ * other top-layer elements of ours (the passkey icon in a field), which don't count as the page's.
+ */
+export function isMenuGenuinelyVisible(
+  host: HTMLElement,
+  view: Window = window,
+  ours: readonly Element[] = [],
+): boolean {
   if (!host.isConnected || !host.matches(":popover-open")) return false;
 
   for (let el: Element | null = host; el; el = el.parentElement) {
@@ -45,7 +52,7 @@ export function isMenuGenuinelyVisible(host: HTMLElement, view: Window = window)
   // put in the top layer after us could, so refuse while any other popover, modal or fullscreen
   // element is open (a fullscreen element with pointer-events: none would cover it unseen).
   const others = view.document.querySelectorAll(":popover-open, :modal, :fullscreen");
-  if (Array.from(others).some((el) => el !== host)) return false;
+  if (Array.from(others).some((el) => el !== host && !ours.includes(el))) return false;
 
   // Hit-test the corners and centre. This catches covering elements that take clicks; overlays
   // with pointer-events: none are invisible to hit-testing, which is why the menu page also tracks

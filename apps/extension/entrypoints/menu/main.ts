@@ -17,6 +17,7 @@ import {
   KEY,
   LOCK,
   OPEN,
+  PASSKEY,
   PERSON,
   REFRESH,
   TIMER,
@@ -45,7 +46,7 @@ const mode = params.get("mode");
 const withLogins = params.get("logins") === "1";
 /** The generated password in the field ("generated" modes) is weaker than usual: the site's rules. */
 const weaker = params.get("weaker") === "1";
-/** The browser's passkey list is hidden on the field: offer to show it (see passkeyRows). */
+/** The browser's passkey list is hidden on the field: offer to show it (see passkeyRow). */
 let hiddenPasskeys = params.get("passkeys") === "1";
 const panel = document.getElementById("menu") as HTMLElement;
 /** "Mac" or "PC": the computer showing Apple's code. Known long before a code is asked for. */
@@ -92,7 +93,12 @@ function reportSize() {
     void send({ type: "menu-resize", nonce, height: 0 }).catch(() => {});
     return;
   }
-  const borders = panel.offsetHeight - panel.clientHeight;
+  const root = getComputedStyle(document.documentElement);
+  const borders =
+    panel.offsetHeight -
+    panel.clientHeight +
+    Number.parseFloat(root.borderTopWidth) +
+    Number.parseFloat(root.borderBottomWidth);
   // scrollHeight is rounded, the content may be a fraction taller: one spare pixel keeps a list
   // that fits from scrolling by that fraction
   void send({ type: "menu-resize", nonce, height: panel.scrollHeight + borders + 1 }).catch(() => {});
@@ -109,7 +115,7 @@ function hide() {
 }
 
 /**
- * Draws the view on screen again, for "menu-passkeys". Set by the views that end in passkeyRows,
+ * Draws the view on screen again, for "menu-passkeys". Set by the views that show passkeyRow,
  * right after they render; any other view (a code being typed, Touch ID) clears it.
  */
 let redraw: (() => void) | undefined;
@@ -175,7 +181,7 @@ async function showLogins(error?: string) {
       render(
         message(`No saved passwords for ${result.hostname ?? "this site"}.`),
         openPasswordsRow(true),
-        ...passkeyRows(),
+        passkeyRow(),
       );
     draw();
     redraw = draw;
@@ -207,7 +213,7 @@ function renderLogins() {
     error ? message(error, true) : null,
     h("hr", { class: "separator" }),
     openPasswordsRow(false),
-    ...passkeyRows(),
+    prefix ? null : passkeyRow(),
   );
   redraw = renderLogins;
 }
@@ -747,15 +753,21 @@ async function showLocked(error?: string) {
 }
 
 /**
- * A separator and "Show browser passkey list", on a field where the browser's passkey list is hidden
- * (see passkey-list.ts). The page closes the menu, and the browser lists its passkeys on the next click.
+ * "Use a Passkey", last in the menu on a field where the browser's passkey list is hidden (see
+ * passkey-list.ts). The page closes the menu, and the browser lists its passkeys on the next click
+ * in the field. Mostly for keyboards and screen readers: a click on the icon in the field is quicker.
  */
-function passkeyRows(): Node[] {
-  if (!hiddenPasskeys) return [];
-  const item = row(KEY, "Show browser passkey list", "Click the input again for the native window", () => {
+function passkeyRow(): HTMLButtonElement | null {
+  if (!hiddenPasskeys) return null;
+  return row(PASSKEY, "Use a Passkey", "", () => {
     void send({ type: "menu-show-passkeys", nonce }).catch(() => {});
   });
-  return [h("hr", { class: "separator" }), item];
+}
+
+/** A separator and passkeyRow, below other rows. */
+function passkeyRows(): Node[] {
+  const item = passkeyRow();
+  return item ? [h("hr", { class: "separator" }), item] : [];
 }
 
 /** Whether the companion app can unlock with Touch ID (as of the last status asked for). */

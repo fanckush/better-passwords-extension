@@ -84,6 +84,13 @@ export function showPasskeyListOnce(field: HTMLElement, done?: () => void): bool
   return true;
 }
 
+/** Ends showPasskeyListOnce early: the token comes out again, before the browser sees this click. */
+export function stopShowingPasskeyList(field: Element): void {
+  if (!field.hasAttribute(ATTRIBUTE_SHOWING)) return;
+  field.removeAttribute(ATTRIBUTE_SHOWING);
+  hidePasskeyList(field);
+}
+
 /**
  * Hides the browser's passkey list on every tagged field, now and as the page adds or tags more
  * (sites like GitHub add the token from a script). Returns a function that stops and restores them.

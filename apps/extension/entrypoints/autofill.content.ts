@@ -1,3 +1,4 @@
+import { FieldIcon } from "@/src/autofill/field-icon.ts";
 import {
   type FieldKind,
   fieldKind,
@@ -13,6 +14,7 @@ import {
   hasHiddenPasskeyList,
   restorePasskeyList,
   showPasskeyListOnce,
+  stopShowingPasskeyList,
 } from "@/src/autofill/passkey-list.ts";
 import {
   isGone,
@@ -40,6 +42,7 @@ import {
   type SignInState,
   send,
 } from "@/src/messages.ts";
+import { PASSKEY } from "@/src/ui/icons.ts";
 import { frameOriginToFill } from "@/src/url-policy.ts";
 
 /** Omit for each member of a union. */
@@ -53,8 +56,10 @@ export default defineContentScript({
   runAt: "document_idle",
   main(ctx) {
     if (!frameOriginToFill()) return;
-    const menu = new MenuHost(browser.runtime.getURL("/menu.html"), (above) =>
-      tellMenu({ type: "menu-placement", above }),
+    const menu = new MenuHost(
+      browser.runtime.getURL("/menu.html"),
+      (above) => tellMenu({ type: "menu-placement", above }),
+      () => [passkeyIcon.element],
     );
     let request = 0;
     // the field whose menu the user just dismissed; it stays closed there until they ask again
@@ -65,6 +70,34 @@ export default defineContentScript({
     let fillingCode = false;
     // the field showing the browser's passkey list instead of our menu, until the user leaves it
     let browserList: HTMLInputElement | undefined;
+    // whether the browser has had its click there yet ("Use a Passkey" promises it the next one)
+    let browserListUsed = false;
+    // the passkey icon at the end of a field whose browser passkey list is hidden: a click on it
+    // opens that list at once, as the click is the field's (see field-icon.ts, and the mousedown
+    // handler below). The field to show it on is the one under the mouse, else the focused one.
+    const passkeyIcon = new FieldIcon({ glyph: PASSKEY, tag: "app-passkey-icon" });
+    let hoveredField: HTMLInputElement | undefined;
+    ctx.onInvalidated(() => passkeyIcon.hide());
+
+    /** Shows the passkey icon on the field under the mouse, else on the focused one, if it hides a list. */
+    function placePasskeyIcon() {
+      const focused = document.activeElement;
+      const field = [hoveredField, focused].find(
+        (el): el is HTMLInputElement => el instanceof HTMLInputElement && hasHiddenPasskeyList(el),
+      );
+      if (field) passkeyIcon.show(field);
+      else passkeyIcon.hide();
+    }
+
+    /** The browser shows its passkey list on `field` for this click (`now`), or the next one there. */
+    function showBrowserList(field: HTMLInputElement, now: boolean) {
+      const done = () => {
+        if (browserList === field) browserList = undefined;
+      };
+      if (!showPasskeyListOnce(field, done)) return;
+      browserList = field;
+      browserListUsed = now;
+    }
 
     /** Keeps the menu closed on `field`, and on every box of its code if it's one. */
     function dismiss(field: HTMLInputElement | undefined) {
@@ -98,6 +131,7 @@ export default defineContentScript({
         menu.close();
         // no menu here, so nothing can show the browser's passkey list on request: give it back
         restorePasskeyList(field);
+        placePasskeyIcon();
       } else if ((kind === "new-password" || (unsure && field === generated?.field)) && field.value !== "") {
         // our own password: say it's saved; one the user typed: stay out of the way
         if (show !== "none" && generated?.field.form === field.form && field.value === generated.value) {
@@ -145,6 +179,7 @@ export default defineContentScript({
     }
     const passkeysHidden = new MutationObserver((records) => {
       if (records.some((record) => record.target === menu.anchor)) offerPasskeys();
+      placePasskeyIcon();
     });
     passkeysHidden.observe(document, { subtree: true, attributes: true, attributeFilter: [ATTRIBUTE_ORIGINAL] });
     ctx.onInvalidated(() => passkeysHidden.disconnect());
@@ -170,13 +205,60 @@ export default defineContentScript({
         if (event.target !== dismissed) dismissed = undefined;
         if (!dismissedCode.has(event.target as HTMLInputElement)) dismissedCode.clear();
         if (!offerFor(event.target) && menu.isOpen) menu.close();
+        placePasskeyIcon();
       },
       { capture: true },
+    );
+    ctx.addEventListener(document, "focusout", () => setTimeout(placePasskeyIcon), { capture: true });
+    ctx.addEventListener(
+      document,
+      "mouseover",
+      (event) => {
+        if (event.target !== passkeyIcon.field) passkeyIcon.hover(false);
+        const field = event.target instanceof HTMLInputElement ? event.target : undefined;
+        if (field === hoveredField) return;
+        hoveredField = field;
+        placePasskeyIcon();
+      },
+      { capture: true, passive: true },
+    );
+    ctx.addEventListener(
+      document,
+      "mousemove",
+      (event) => {
+        if (event.target === passkeyIcon.field) passkeyIcon.hover(passkeyIcon.hits(event.clientX, event.clientY));
+      },
+      { capture: true, passive: true },
     );
     ctx.addEventListener(
       document,
       "mousedown",
       (event) => {
+        // a click on the passkey icon is a click on its field: the browser's list opens for it, ours closes
+        const target = event.target;
+        if (
+          event.button === 0 &&
+          target instanceof HTMLInputElement &&
+          target === passkeyIcon.field &&
+          passkeyIcon.hits(event.clientX, event.clientY)
+        ) {
+          if (menu.isOpen) menu.close();
+          if (browserList !== target) showBrowserList(target, true);
+          return;
+        }
+        // after the browser's turn, a click on the field's text is ours again: the token goes out
+        // before the browser sees this click (with no passkeys, its list never even showed)
+        if (event.button === 0 && browserList && target === browserList) {
+          if (!browserListUsed) {
+            browserListUsed = true;
+            return;
+          }
+          const field = browserList;
+          browserList = undefined;
+          stopShowingPasskeyList(field);
+          offerFor(field);
+          return;
+        }
         if (menu.isOpen && event.target !== menu.element && event.target !== menu.anchor) menu.close();
         // clicking the field while nothing typed matches brings every login back
         if (menu.isOpen && !menu.isShowing && event.target === menu.anchor) filterMenu("");
@@ -418,10 +500,7 @@ export default defineContentScript({
           // for clicks only); our menu stays out of its way there until the user leaves the field
           const field = menu.anchor;
           menu.close();
-          const done = () => {
-            if (browserList === field) browserList = undefined;
-          };
-          if (field && showPasskeyListOnce(field, done)) browserList = field;
+          if (field) showBrowserList(field, false);
           return false;
         }
         case "menu-new-password-context": {

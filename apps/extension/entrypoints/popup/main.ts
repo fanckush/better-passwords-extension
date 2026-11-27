@@ -534,13 +534,13 @@ async function footer(status: Status) {
     { class: "settings" },
     h("h2", { textContent: "Suggestions" }),
     option("inlineMenu", "When signing in", "saved passwords"),
-    option("oneTimeCodes", "Verification codes", "when a site asks for one"),
-    option("generatePasswords", "When signing up", "strong passwords and emails"),
-    option("hideMyEmail", "Hide My Email", "iCloud+ addresses, labeled with the site's name"),
     // Chromium only: Firefox has no passkey list over login fields
     ...(import.meta.env.FIREFOX
       ? []
-      : [option("hidePasskeyList", "Hide browser passkey list", "the menu offers it once, on request")]),
+      : [option("hidePasskeyList", "Passkeys", "an icon in the field instead of the browser's list")]),
+    option("oneTimeCodes", "Verification codes", "when a site asks for one"),
+    option("generatePasswords", "When signing up", "strong passwords and emails"),
+    option("hideMyEmail", "Hide My Email", "iCloud+ addresses, labeled with the site's name"),
     // the companion app is Mac only; elsewhere there's nothing to offer
     ...(status.companion === "unavailable" ? [] : [h("hr"), macAppSection(status, option)]),
     h("hr"),

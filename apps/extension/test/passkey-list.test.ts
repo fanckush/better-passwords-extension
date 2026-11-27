@@ -5,6 +5,7 @@ import {
   hidePasskeyList,
   restorePasskeyList,
   showPasskeyListOnce,
+  stopShowingPasskeyList,
   watchPasskeyLists,
 } from "../src/autofill/passkey-list.ts";
 
@@ -70,6 +71,24 @@ describe("hidePasskeyList", () => {
     form.setAttribute("autocomplete", "webauthn");
     hidePasskeyList(form);
     expect(form.getAttribute("autocomplete")).toBe("webauthn");
+  });
+});
+
+describe("stopShowingPasskeyList", () => {
+  it("takes the token out again before the user leaves the field", () => {
+    const input = field("username webauthn");
+    hidePasskeyList(input);
+    showPasskeyListOnce(input);
+    expect(input.getAttribute("autocomplete")).toBe("username webauthn");
+    stopShowingPasskeyList(input);
+    expect(input.getAttribute("autocomplete")).toBe("username");
+    expect(hasHiddenPasskeyList(input)).toBe(true);
+  });
+
+  it("leaves a field that isn't showing the list alone", () => {
+    const input = field("username webauthn");
+    stopShowingPasskeyList(input);
+    expect(input.getAttribute("autocomplete")).toBe("username webauthn");
   });
 });
 

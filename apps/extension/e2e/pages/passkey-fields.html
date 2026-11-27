@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Passkey fields of every kind</title>
+    <style>
+      body { font: 16px system-ui; padding: 40px; }
+      label { display: block; margin-bottom: 48px; position: relative; width: max-content; }
+      input { display: block; box-sizing: border-box; width: 320px; }
+      /* like Google's */
+      #google { height: 56px; padding: 0 16px; border: 1px solid #747775; border-radius: 4px; font-size: 16px; }
+      /* like Canva's: a pill */
+      #pill { height: 48px; padding: 0 12px; border: 1px solid #888; border-radius: 24px; }
+      #small { height: 28px; padding: 0 6px; font-size: 12px; }
+      #dark { height: 44px; padding: 0 12px; background: #202124; color: #e8eaed; border: 1px solid #5f6368; }
+      #covered-icon { position: absolute; right: 10px; top: 50%; translate: 0 -50%; width: 20px; height: 20px; background: #ccc; }
+      #tiny { height: 14px; font-size: 10px; padding: 0 2px; }
+    </style>
+  </head>
+  <body>
+    <label>Google <input id="google" autocomplete="username webauthn" /></label>
+    <label>Pill <input id="pill" autocomplete="username webauthn" /></label>
+    <label>Small <input id="small" autocomplete="username webauthn" /></label>
+    <label>Dark <input id="dark" autocomplete="username webauthn" /></label>
+    <label>Right to left <input id="rtl" dir="rtl" autocomplete="username webauthn" /></label>
+    <!-- the page's own icon at the field's end, which takes clicks -->
+    <label>Covered <input id="covered" autocomplete="username webauthn" /><span id="covered-icon"></span></label>
+    <label>Tiny <input id="tiny" autocomplete="username webauthn" /></label>
+  </body>
+</html>

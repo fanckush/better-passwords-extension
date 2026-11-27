@@ -73,6 +73,25 @@ Every menu gets a random nonce, issued by the background with its answer to the 
 
 The content script runs in the page, in iframes of the page's own origin with only that origin around them, and in HTTPS iframes on another host of the page's site right inside the page (Schwab's sign-in on `sws-gateway-nr.schwab.com` inside `www.schwab.com`, Apple's on `idmsa.apple.com` inside `appstoreconnect.apple.com`). Such a frame can't read the page's address, so the background checks the site: the same registrable domain by the public suffix list, private part included, so two `github.io` sites stay apart (`isSameSiteFrame` in `apps/extension/src/same-site-frame.ts`). Once that frame asks for the menu, the tab is filled and saved for the frame's host until a field of the page's own origin asks. Logins in iframes of other sites are never filled.
 
+## Passkeys (Chromium)
+
+Chromium shows its own passkey list on a login field whose `autocomplete` has the `webauthn` token, on top of our menu. With the **Passkeys** setting on (the default), `passkey-list.content.ts` takes that token out of every such field from the start of the page, and keeps the page's value to put it back (`apps/extension/src/autofill/passkey-list.ts`). The site's own passkey request is untouched.
+
+The browser opens its list only for a real click in the field, which no script can make. So we put the token back at the right moment, on the capture `mousedown` of a click in the field, before the browser looks at it (a `click` handler is too late: the browser decided at mousedown and focus):
+- a click on the passkey icon at the field's end opens the browser's list with that click, and closes our menu
+- "Use a Passkey" in our menu (for keyboards and screen readers) gives the browser the next click in the field
+- after the browser's turn, a click on the field's text is ours again: the token comes out before the browser sees it
+
+Leaving the field takes the token out again. We can't tell whether the user has a passkey for the site: the browser doesn't say.
+
+## Icons in fields
+
+An icon of ours at the end of a field is a `FieldIcon` (`apps/extension/src/autofill/field-icon.ts`), placed by the pure `fieldIconLayout` (`field-icon-layout.ts`). Both are generic: the content script decides which field gets an icon and what a click on it does. The passkey icon is the first user.
+- **Clicks pass through.** The icon has `pointer-events: none`, so a click on it is the user's click on the field. The content script's capture `mousedown` asks `hits()` and acts before the browser handles the click. The page has nothing of ours to click, cover or fake clicks on.
+- **Layout follows the field:** size from its font and height (14–20 px), inside its border and padding, clear of rounded corners, centred vertically, at the left end in a right-to-left field, in the field's text colour, faded. One icon per field so far: a second one would need an offset in `fieldIconLayout`. The layout cases are unit tested in `field-icon-layout.test.ts`, and measured on real fields in `e2e/passkey-list.spec.ts` with `e2e/pages/passkey-fields.html`.
+- **Hidden where a click wouldn't reach the field:** off screen, too small, or something of the page's on top at the icon's spot.
+- **The menu's visibility check must know about it.** The icon is in the top layer, which the check reads as the page covering the menu, so `MenuHost` takes our own top-layer elements (`ours`) to ignore. Pass any new icon's element there too.
+
 ## Filling (popup)
 
 1. The popup asks the background for the active tab's logins.

@@ -75,7 +75,7 @@ export class MenuHost {
   /** What the menu page was last told of that (see onPlacement); it can't hear before it has loaded. */
   #toldAbove: boolean | undefined;
   readonly #watch = new VisibilityWatch(
-    () => isMenuGenuinelyVisible(this.#host),
+    () => isMenuGenuinelyVisible(this.#host, window, this.ours()),
     undefined,
     undefined,
     // where it is, to the pixel: a menu that moves (one following a jumping field) waits again
@@ -89,10 +89,14 @@ export class MenuHost {
   /** Where the field and viewport were when the menu was last placed. */
   #placedFor = "";
 
-  /** `onPlacement` tells the menu page when it moves above its field, or back under it. */
+  /**
+   * `onPlacement` tells the menu page when it moves above its field, or back under it. `ours`: our
+   * other top-layer elements, which the visibility check doesn't take for the page's.
+   */
   constructor(
     private readonly menuUrl: string,
     private readonly onPlacement: (above: boolean) => void = () => {},
+    private readonly ours: () => readonly Element[] = () => [],
   ) {
     this.#host = document.createElement("app-autofill-menu");
     this.#host.setAttribute("popover", "manual");
