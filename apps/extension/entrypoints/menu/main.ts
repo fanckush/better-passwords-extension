@@ -30,6 +30,9 @@ import {
 applySystemAccent();
 
 const params = new URLSearchParams(window.location.hash.slice(1));
+/** The page's scheme, light or dark, which the menu matches rather than the system's. */
+const scheme = params.get("scheme");
+if (scheme === "light" || scheme === "dark") document.documentElement.dataset.scheme = scheme;
 const nonce = params.get("nonce") ?? "";
 bindToMenu(nonce);
 /**

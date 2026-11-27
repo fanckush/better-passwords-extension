@@ -3,6 +3,7 @@
 // (cross-origin) or the shadow root (closed), and can't style it (inline !important styles).
 
 import type { FieldKind } from "./fields.ts";
+import { pageScheme, type Scheme } from "./page-scheme.ts";
 import { isMenuGenuinelyVisible, VisibilityWatch } from "./visibility.ts";
 
 /** "generated": the field holds a password we generated and filled in (and saved, unless "-unsaved"). */
@@ -40,7 +41,7 @@ const HOST_STYLE: Record<string, string> = {
   "box-shadow": "0 8px 28px light-dark(rgb(0 0 0 / 0.18), rgb(0 0 0 / 0.5)), 0 1px 4px rgb(0 0 0 / 0.12)",
 };
 
-function createFrame(src: string): HTMLIFrameElement {
+function createFrame(src: string, scheme: Scheme): HTMLIFrameElement {
   const frame = document.createElement("iframe");
   frame.setAttribute("title", "Better Passwords");
   frame.setAttribute("allow", "");
@@ -49,7 +50,7 @@ function createFrame(src: string): HTMLIFrameElement {
     width: "100%",
     height: "100%",
     display: "block",
-    "color-scheme": "light dark",
+    "color-scheme": scheme,
   })) {
     frame.style.setProperty(key, value, "important");
   }
@@ -88,6 +89,8 @@ export class MenuHost {
   #followFrame: number | undefined;
   /** Where the field and viewport were when the menu was last placed. */
   #placedFor = "";
+  /** The page's scheme, which the menu's shadow follows too. */
+  #scheme: Scheme | undefined;
 
   /**
    * `onPlacement` tells the menu page when it moves above its field, or back under it. `ours`: our
@@ -167,12 +170,15 @@ export class MenuHost {
     // The nonce ties requests to this menu; a copy of menu.html framed by the page itself has none.
     // "password": the menu is on a password field, e.g. the step after the username in a multi-step sign-in
     const field = anchor.type === "password" ? "password" : "username";
-    const params = new URLSearchParams({ nonce: this.#nonce, mode, kind, field });
+    // the menu matches the page under it, not the system (see page-scheme.ts)
+    const scheme = pageScheme(anchor);
+    this.#scheme = scheme;
+    const params = new URLSearchParams({ nonce: this.#nonce, mode, kind, field, scheme });
     if (orGenerate) params.set("orGenerate", "1");
     if (weaker) params.set("weaker", "1");
     if (logins) params.set("logins", "1");
     if (passkeys) params.set("passkeys", "1");
-    this.#frame = createFrame(`${this.menuUrl}#${params}`);
+    this.#frame = createFrame(`${this.menuUrl}#${params}`, scheme);
     this.#shadow.replaceChildren(this.#frame);
     if (!this.#host.isConnected) document.documentElement.append(this.#host);
     // re-entering the top layer puts us above anything the page opened before
@@ -274,7 +280,8 @@ export class MenuHost {
   }
 
   #applyStyle(extra: Record<string, string> = {}): void {
-    for (const [key, value] of Object.entries({ ...HOST_STYLE, ...extra })) {
+    const scheme = this.#scheme ? { "color-scheme": this.#scheme } : {};
+    for (const [key, value] of Object.entries({ ...HOST_STYLE, ...scheme, ...extra })) {
       this.#host.style.setProperty(key, value, "important");
     }
   }

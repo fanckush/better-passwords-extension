@@ -1,4 +1,6 @@
-/* Design tokens: native macOS feel (system font, system colors), light and dark. */
+/* Design tokens: native macOS feel (system font, system colors), light and dark.
+   Colors follow the root's color-scheme: the system's by default, or one a page forces (the inline
+   menu matches the site under it, see pageScheme). */
 :root {
   color-scheme: light dark;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
@@ -6,27 +8,22 @@
   --radius-small: 6px;
   --space: 12px;
 
-  --bg: #f6f6f6;
-  --surface: #ffffff;
-  --text: #1d1d1f;
-  --text-secondary: #6e6e73;
-  --separator: rgb(0 0 0 / 10%);
-  --hover: rgb(0 0 0 / 5%);
+  --bg: light-dark(#f6f6f6, #1e1e1e);
+  --surface: light-dark(#ffffff, #2a2a2a);
+  --text: light-dark(#1d1d1f, #f5f5f7);
+  --text-secondary: light-dark(#6e6e73, #98989d);
+  --separator: light-dark(rgb(0 0 0 / 10%), rgb(255 255 255 / 12%));
+  --hover: light-dark(rgb(0 0 0 / 5%), rgb(255 255 255 / 7%));
   --accent: #0a84ff;
   --accent-text: #ffffff;
-  --danger: #d70015;
-  --warning: #c27c00;
+  --danger: light-dark(#d70015, #ff453a);
+  --warning: light-dark(#c27c00, #ffb340);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1e1e1e;
-    --surface: #2a2a2a;
-    --text: #f5f5f7;
-    --text-secondary: #98989d;
-    --separator: rgb(255 255 255 / 12%);
-    --hover: rgb(255 255 255 / 7%);
-    --danger: #ff453a;
-    --warning: #ffb340;
-  }
+:root[data-scheme="light"] {
+  color-scheme: light;
+}
+
+:root[data-scheme="dark"] {
+  color-scheme: dark;
 }
