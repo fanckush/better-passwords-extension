@@ -51,6 +51,13 @@ const withLogins = params.get("logins") === "1";
 const weaker = params.get("weaker") === "1";
 /** The browser's passkey list is hidden on the field: offer to show it (see passkeyRow). */
 let hiddenPasskeys = params.get("passkeys") === "1";
+/**
+ * Opened on focus alone (autofocus, Tab): with nothing saved for the site, the menu stays hidden
+ * until the user clicks the field or presses ↓. Over once anything has been shown.
+ */
+let quiet = params.get("quiet") === "1";
+/** The "nothing saved" view held back while quiet, drawn when the user asks for the menu. */
+let heldEmpty: (() => void) | undefined;
 const panel = document.getElementById("menu") as HTMLElement;
 /** "Mac" or "PC": the computer showing Apple's code. Known long before a code is asked for. */
 let computer = "Mac";
@@ -92,7 +99,8 @@ let typingOwn = false;
 
 /** Asks for room for the whole list (the host caps it; beyond that the list scrolls). */
 function reportSize() {
-  if (typingOwn) {
+  // nothing in the panel (hidden): no frame, not an empty one a border high
+  if (typingOwn || panel.childElementCount === 0) {
     void send({ type: "menu-resize", nonce, height: 0 }).catch(() => {});
     return;
   }
@@ -125,6 +133,8 @@ let redraw: (() => void) | undefined;
 
 function render(...children: (Node | null)[]) {
   redraw = undefined;
+  quiet = false;
+  heldEmpty = undefined;
   panel.replaceChildren(...children.filter((c): c is Node => c !== null));
   // right away: the frame stays hidden until the first report, and a hidden frame gets no
   // animation frames (reading the size lays the panel out synchronously)
@@ -180,15 +190,21 @@ async function showLogins(error?: string) {
   if (result.logins.length === 0) {
     loginsView = undefined;
     if (orGenerate) return showGenerate();
-    const draw = () =>
+    const draw = () => {
       render(
         message(`No saved passwords for ${result.hostname ?? "this site"}.`),
         openPasswordsRow(true),
         passkeyRow(),
       );
-    draw();
-    redraw = draw;
-    return;
+      redraw = draw;
+    };
+    // nothing to offer on focus alone: out of the way until asked for (the passkey row is an offer)
+    if (quiet && !hiddenPasskeys) {
+      heldEmpty = draw;
+      redraw = draw;
+      return hide();
+    }
+    return draw();
   }
   loginsView = {
     logins: result.logins,
@@ -249,7 +265,14 @@ async function showCodes(error?: string) {
   }
   if (result.codes.length === 0) {
     codesView = undefined;
-    return render(message(`No verification codes for ${result.hostname ?? "this site"}.`), openPasswordsRow(false));
+    const draw = () =>
+      render(message(`No verification codes for ${result.hostname ?? "this site"}.`), openPasswordsRow(false));
+    // on focus alone, out of the way until asked for, or until a code arrives
+    if (quiet) {
+      heldEmpty = draw;
+      return hide();
+    }
+    return draw();
   }
   codesView = {
     codes: result.codes,
@@ -309,6 +332,11 @@ browser.runtime.onMessage.addListener((request: MenuMessage, sender) => {
   // (an empty query, on a click or ↓ in the field: everything again, even over a typed password)
   if (request.type === "menu-filter" && nonce && request.nonce === nonce) {
     query = request.query;
+    // asked for before the menu had anything to show: it shows, even with nothing saved
+    if (request.asked) {
+      quiet = false;
+      heldEmpty?.();
+    }
     if (typingOwn && !query) {
       typingOwn = false;
       reportSize();
@@ -476,7 +504,12 @@ async function whileAsking<T>(request: Promise<T>): Promise<T> {
 
 async function showEmail() {
   // asking iCloud can take a second or two: show that something is happening, unless it's quick
-  const loading = setTimeout(() => render(loadingRow(ENVELOPE, "Hide My Email")), 150);
+  // (a wait, not an answer: the menu stays as quiet as it was)
+  const loading = setTimeout(() => {
+    const wasQuiet = quiet;
+    render(loadingRow(ENVELOPE, "Hide My Email"));
+    quiet = wasQuiet;
+  }, 150);
   try {
     const [suggestions, status] = await Promise.all([
       whileAsking(send({ type: "email-suggestions", nonce, logins: withLogins })),
@@ -594,8 +627,15 @@ function renderEmail(suggestions: EmailSuggestions, error?: string) {
 
   // an email field may carry the passkey list too (the separator only below other rows)
   const passkeys = typing ? [] : passkeyRows();
-  // nothing to offer at all: closed; nothing left for what's typed: hidden until it's emptied
-  if (all.length === 0 && passkeys.length === 0) return typing ? hide() : close();
+  // nothing to offer at all: closed; nothing left for what's typed: hidden until it's emptied.
+  // A sign-in's field with nothing saved says so, like a login field (on a click, not on focus alone).
+  if (all.length === 0 && passkeys.length === 0) {
+    if (logins?.state !== "ready") return typing ? hide() : close();
+    if (typing || quiet) return hide();
+    render(message(`No saved passwords for ${logins.hostname}.`), openPasswordsRow(true));
+    redraw = () => renderEmail(suggestions, error);
+    return;
+  }
   render(...all, ...(all.length === 0 ? passkeys.slice(1) : passkeys));
   redraw = () => renderEmail(suggestions, error);
 }

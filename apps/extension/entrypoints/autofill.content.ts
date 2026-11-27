@@ -78,6 +78,9 @@ export default defineContentScript({
     const passkeyIcon = new FieldIcon({ glyph: PASSKEY, tag: "app-passkey-icon" });
     let hoveredField: HTMLInputElement | undefined;
     ctx.onInvalidated(() => passkeyIcon.hide());
+    // the field the mouse was last pressed on, or on its label: a focus that follows is a click's,
+    // which shows the menu even with nothing saved (see the menu's "quiet")
+    let pressed: HTMLInputElement | undefined;
 
     /** Shows the passkey icon on the field under the mouse, else on the focused one, if it hides a list. */
     function placePasskeyIcon() {
@@ -111,7 +114,8 @@ export default defineContentScript({
       | { field: HTMLInputElement; value: string; saved: boolean; username: string; weaker: boolean }
       | undefined;
 
-    async function offer(field: HTMLInputElement, kind: FieldKind) {
+    /** `asked`: the user clicked the field or pressed ↓; on focus alone, an empty menu stays hidden. */
+    async function offer(field: HTMLInputElement, kind: FieldKind, asked: boolean) {
       if (menu.anchor === field || dismissed === field || dismissedCode.has(field) || fillingCode) return;
       if (field === browserList) return;
       // like Safari: a code is offered while the field is empty, not over one being typed
@@ -127,6 +131,7 @@ export default defineContentScript({
       // the user may have moved on while we asked
       if (ticket !== request || document.activeElement !== field) return;
       const passkeys = hasHiddenPasskeyList(field);
+      const quiet = !asked;
       if (nonce === undefined) {
         menu.close();
         // no menu here, so nothing can show the browser's passkey list on request: give it back
@@ -142,13 +147,13 @@ export default defineContentScript({
           menu.close();
         }
       } else if (show === "email" && kind === "email") {
-        menu.open(field, "email", kind, nonce, { logins: signIn, passkeys });
+        menu.open(field, "email", kind, nonce, { logins: signIn, passkeys, quiet });
       } else if (show === "codes" && kind === "one-time-code") {
-        menu.open(field, "codes", kind, nonce);
+        menu.open(field, "codes", kind, nonce, { quiet });
       } else if (show === "logins" || show === "generate" || show === "locked" || show === "setup") {
         // "locked" and "setup" too: login fields include guessed usernames, but only next to a
         // password field, and the email field is usually the first one people click
-        menu.open(field, show, kind, nonce, { orGenerate: orGenerate ?? false, passkeys });
+        menu.open(field, show, kind, nonce, { orGenerate: orGenerate ?? false, passkeys, quiet });
       } else {
         menu.close();
       }
@@ -184,16 +189,19 @@ export default defineContentScript({
     passkeysHidden.observe(document, { subtree: true, attributes: true, attributeFilter: [ATTRIBUTE_ORIGINAL] });
     ctx.onInvalidated(() => passkeysHidden.disconnect());
 
-    /** Tells the open menu what's typed in its username field, so it lists only the logins that match. */
-    function filterMenu(query: string) {
-      tellMenu({ type: "menu-filter", query });
+    /**
+     * Tells the open menu what's typed in its username field, so it lists only the logins that match.
+     * `asked`: an empty query from a click or ↓, which shows the menu even with nothing saved.
+     */
+    function filterMenu(query: string, asked = false) {
+      tellMenu({ type: "menu-filter", query, asked });
     }
 
     /** Offers a menu for `target` if it gets one; returns whether it does. */
-    function offerFor(target: EventTarget | null): boolean {
+    function offerFor(target: EventTarget | null, asked = false): boolean {
       const kind = fieldKind(target);
       if (!kind) return false;
-      void offer(target as HTMLInputElement, kind);
+      void offer(target as HTMLInputElement, kind, asked);
       return true;
     }
 
@@ -209,9 +217,11 @@ export default defineContentScript({
       "focusin",
       (event) => {
         if (event.target === menu.element || fillingCode) return;
+        const asked = event.target === pressed;
+        pressed = undefined;
         if (event.target !== dismissed) dismissed = undefined;
         if (!dismissedCode.has(event.target as HTMLInputElement)) dismissedCode.clear();
-        if (!offerFor(event.target) && menu.isOpen) menu.close();
+        if (!offerFor(event.target, asked) && menu.isOpen) menu.close();
         placePasskeyIcon();
       },
       { capture: true },
@@ -263,20 +273,22 @@ export default defineContentScript({
           const field = browserList;
           browserList = undefined;
           stopShowingPasskeyList(field);
-          offerFor(field);
+          offerFor(field, true);
           return;
         }
         // a click on the field's label is one on the field: the menu stays (the browser takes focus
         // off the field and gives it back, which the menu, still on that field, rides out)
         const field = fieldPressed(target);
+        pressed = event.button === 0 ? field : undefined;
         const clicked = field ?? target;
         if (menu.isOpen && clicked !== menu.element && clicked !== menu.anchor) menu.close();
-        // clicking the field while nothing typed matches brings every login back
-        if (menu.isOpen && !menu.isShowing && clicked === menu.anchor) filterMenu("");
+        // clicking the field while nothing typed matches brings every login back, and shows the
+        // menu that opened hidden for having nothing saved
+        if (menu.isOpen && !menu.isShowing && clicked === menu.anchor) filterMenu("", true);
         // clicking a field whose menu was dismissed asks for it again
         if (field && (field === dismissed || dismissedCode.has(field))) {
           dismiss(undefined);
-          offerFor(field);
+          offerFor(field, true);
         }
       },
       { capture: true },
@@ -289,7 +301,7 @@ export default defineContentScript({
         if (event.key === "ArrowDown" && !menu.isOpen && wasDismissed) {
           event.preventDefault();
           dismiss(undefined);
-          offerFor(event.target);
+          offerFor(event.target, true);
           return;
         }
         if (!menu.isOpen || event.target !== menu.anchor) return;
@@ -300,7 +312,7 @@ export default defineContentScript({
         // the arrow pointing at the menu leads into it (↑ when it sits above the field)
         if (event.key === (menu.isAbove ? "ArrowUp" : "ArrowDown")) {
           event.preventDefault();
-          if (!menu.isShowing) filterMenu("");
+          if (!menu.isShowing) filterMenu("", true);
           menu.focusMenu();
         }
       },

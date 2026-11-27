@@ -746,7 +746,10 @@ export default defineBackground(() => {
     return !["blocked", "no-helper"].includes(session.status.state);
   }
 
-  /** The usernames saved for the tab's site, or "locked" if they can't be listed until unlocked. */
+  /**
+   * The usernames saved for the tab's site (none, too: the menu then says so), or "locked" if they
+   * can't be listed until unlocked.
+   */
   async function savedLogins(tabId: number): Promise<EmailSuggestions["logins"]> {
     if (!(await connectedUnlocked())) return canUnlock() ? { state: "locked" } : undefined;
     const url = await tabUrl(tabId);
@@ -754,7 +757,6 @@ export default defineBackground(() => {
     try {
       const client = await session.unlockedClient();
       const logins = await client.getLogins(url.hostname, { tabId });
-      if (logins.length === 0) return undefined;
       return { state: "ready", hostname: url.hostname, usernames: logins.map(({ username }) => username) };
     } catch {
       return undefined;

@@ -241,7 +241,8 @@ export interface EmailSuggestions {
   /**
    * The logins saved for the site, when unlocked: an email field nothing marks as a sign-in's may
    * still be one (a sign-in by emailed code, or one page for signing in and up), so like Safari
-   * they're listed first. "locked": none can be listed until unlocked, so the menu offers that first.
+   * they're listed first (none saved: the menu says so, as on a login field). "locked": none can be
+   * listed until unlocked, so the menu offers that first.
    */
   logins?: { state: "ready"; hostname: string; usernames: string[] } | { state: "locked" };
 }
@@ -335,8 +336,10 @@ export type MenuMessage =
    * Sent by the content script straight to the menu (the background ignores it): what the user
    * typed into the username (or email) field, so the menu lists only the logins (or
    * addresses) it starts. Only the text goes this way; usernames never reach the content script.
+   * `asked`: the user clicked the field (or its label) or pressed ↓, so the menu shows even with
+   * nothing saved (see the `quiet` menu option).
    */
-  | { type: "menu-filter"; nonce: string; query: string }
+  | { type: "menu-filter"; nonce: string; query: string; asked?: boolean }
   /**
    * Also from the content script: the user is typing a password of their own into the sign-in's
    * password field (or emptied it again). Only whether it's empty goes this way, never the text.

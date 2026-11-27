@@ -144,6 +144,8 @@ export class MenuHost {
    * `weaker`: the password in "generated" modes is weaker than usual, held back by the site's rules.
    * `logins`: an email field that may sign in lists the site's saved logins too.
    * `passkeys`: the browser's passkey list is hidden on the field, so the menu offers to show it.
+   * `quiet`: opened on focus alone (autofocus, Tab), not a click: with nothing saved for the site,
+   * the menu stays hidden until the user clicks the field or presses ↓.
    */
   open(
     anchor: HTMLInputElement,
@@ -155,7 +157,8 @@ export class MenuHost {
       weaker = false,
       logins = false,
       passkeys = false,
-    }: { orGenerate?: boolean; weaker?: boolean; logins?: boolean; passkeys?: boolean } = {},
+      quiet = false,
+    }: { orGenerate?: boolean; weaker?: boolean; logins?: boolean; passkeys?: boolean; quiet?: boolean } = {},
   ): void {
     this.#anchor = anchor;
     this.#nonce = nonce;
@@ -178,6 +181,7 @@ export class MenuHost {
     if (weaker) params.set("weaker", "1");
     if (logins) params.set("logins", "1");
     if (passkeys) params.set("passkeys", "1");
+    if (quiet) params.set("quiet", "1");
     this.#frame = createFrame(`${this.menuUrl}#${params}`, scheme);
     this.#shadow.replaceChildren(this.#frame);
     if (!this.#host.isConnected) document.documentElement.append(this.#host);

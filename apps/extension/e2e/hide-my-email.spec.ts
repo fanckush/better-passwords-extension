@@ -1,6 +1,6 @@
 import type { BrowserContext, Frame } from "@playwright/test";
 import { EXTENSION_ID } from "../src/config.ts";
-import { choose, expect, menuFrame, test } from "./fixtures.ts";
+import { choose, expect, menuFrame, PAIRING_CODE, test } from "./fixtures.ts";
 
 /** A fake icloud.com for the extension's background, recording what it was asked. */
 async function fakeICloud(
@@ -330,4 +330,45 @@ test.describe("on a page that signs in or up by email", () => {
     await choose(menu, "jane@example.com");
     await expect(page.locator("#email")).toHaveValue("jane@example.com");
   });
+});
+
+test("a sign-in email field with nothing saved says so on a click, as a login field does", async ({
+  context,
+  siteUrl,
+  popupUrl,
+}) => {
+  // Hide My Email off and its hints dismissed: the menu has nothing else to offer here
+  const popup = await context.newPage();
+  await popup.goto(popupUrl);
+  await popup.evaluate(() => {
+    type Runtime = { runtime: { sendMessage(message: unknown): Promise<unknown> } };
+    const { chrome } = globalThis as unknown as { chrome: Runtime };
+    return chrome.runtime.sendMessage({
+      type: "set-settings",
+      settings: { hideMyEmailHint: false, companionEmailsHint: false },
+    });
+  });
+  await popup.close();
+
+  // the vault has logins for localhost only; 127.0.0.1 is the same page with none
+  const page = await context.newPage();
+  await page.goto(`${siteUrl.replace("localhost", "127.0.0.1")}/continue.html`);
+  let menu = await emailMenu(page);
+  await choose(menu, "Unlock to fill passwords");
+  await menu.getByLabel("Verification code").fill(PAIRING_CODE);
+  await expect(menu.getByText("No saved passwords for 127.0.0.1.")).toBeVisible();
+
+  // focus alone (autofocus, Tab): nothing on screen
+  await page.reload();
+  await page.locator("#email").focus();
+  await expect.poll(() => page.frames().some((f) => f.url().includes("/menu.html#") && !f.isDetached())).toBe(true);
+  await page.waitForTimeout(500);
+  const visibility = () =>
+    page.locator("app-autofill-menu").evaluate((el) => getComputedStyle(el).visibility, undefined, { timeout: 1_000 });
+  expect(await visibility()).toBe("hidden");
+
+  // a click asks for it
+  menu = await emailMenu(page);
+  await expect(menu.getByText("No saved passwords for 127.0.0.1.")).toBeVisible();
+  expect(await visibility()).toBe("visible");
 });

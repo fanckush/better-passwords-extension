@@ -70,6 +70,36 @@ test("a site without saved logins says so on every focus, not only after unlocki
   await expect(menu.getByText("No saved passwords for 127.0.0.1.")).toBeVisible();
 });
 
+test("a site without saved logins shows nothing on focus alone, until the field is clicked", async ({
+  context,
+  siteUrl,
+}) => {
+  const page = await context.newPage();
+  await page.goto(`${siteUrl.replace("localhost", "127.0.0.1")}/login.html`);
+  await page.locator("#pass").click();
+  const first = await menuFrame(page);
+  await choose(first, "Unlock to fill passwords");
+  await first.getByLabel("Verification code").fill(PAIRING_CODE);
+  await expect(first.getByText("No saved passwords for 127.0.0.1.")).toBeVisible();
+
+  // focus without a click (autofocus, Tab): the menu opens hidden, with nothing on screen
+  await page.keyboard.press("Escape");
+  await page.locator("#user").focus();
+  await expect
+    .poll(() => page.frames().some((f) => f.url().includes("/menu.html#") && f !== first && !f.isDetached()))
+    .toBe(true);
+  await page.waitForTimeout(500);
+  const visibility = () =>
+    page.locator("app-autofill-menu").evaluate((el) => getComputedStyle(el).visibility, undefined, { timeout: 1_000 });
+  expect(await visibility()).toBe("hidden");
+
+  // a click in the field asks for it: the empty state shows, so the extension isn't taken for broken
+  await page.locator("#user").click();
+  const menu = await menuFrame(page);
+  await expect(menu.getByText("No saved passwords for 127.0.0.1.")).toBeVisible();
+  expect(await visibility()).toBe("visible");
+});
+
 test("clicking the field's label keeps its menu open", async ({ context, siteUrl }) => {
   const page = await context.newPage();
   await page.goto(`${siteUrl}/login.html`);
