@@ -31,6 +31,17 @@ When an extension release is due, CI:
 
 The Chrome Web Store extension ID is `ocongmkplhijgajnipnhhggfcjfdilgj`. Its public key is in `apps/extension/src/config.ts`; the setup script and companion allow this same ID. The Chrome ZIP attached to GitHub releases keeps the manifest `key` field, so unpacked installs get this ID too; Chrome rejects that field on upload, so the store gets a copy without it from `.output/store/`. If the store identity ever changes, update the extension config, setup script, companion identity and tests, README and website links together.
 
+## Betas (v2)
+
+The `v2` branch is a beta channel for the next major version. Its pushes go through the same job, but:
+- the versions are pre-releases (`2.0.0-beta.N`), published only as GitHub pre-releases, which never count as the latest release;
+- nothing is sent to the stores, and the companion app isn't released from it;
+- linked issues and PRs get no "released" comment (the stable release posts it).
+
+The first beta needs a breaking commit (`feat!: …`) so the channel starts at 2.0.0. Testers download the Chromium ZIP from the pre-release and load it unpacked (Developer mode → Load unpacked). It keeps the store's extension ID, so it uses the same native host registration as the store version. Use it in a separate browser profile from the store version. Firefox needs a signed build, so Firefox testers wait for an unlisted AMO upload, or load it temporarily from `about:debugging`.
+
+When v2 is ready, merge it into `main` to release `2.0.0` the usual way.
+
 ## Companion app
 
 The companion job stays off until the repository variable `COMPANION_RELEASE` is `true`. An unsigned app would be blocked by Gatekeeper, so a release needs these secrets:
