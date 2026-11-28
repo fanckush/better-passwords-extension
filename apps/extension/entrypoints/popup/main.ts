@@ -501,6 +501,54 @@ async function fill(tabId: number, username: string) {
 
 type Option = (key: keyof Settings, label: string, detail?: string, disabled?: boolean) => HTMLElement;
 
+/** Whether we turned off the browser's address autofill (see addressAutofillOption). */
+async function addressAutofillOff(): Promise<boolean> {
+  if (!(await browser.permissions.contains({ permissions: ["privacy"] }))) return false;
+  const { levelOfControl } = await browser.privacy.services.autofillAddressEnabled.get({});
+  return levelOfControl === "controlled_by_this_extension";
+}
+
+/**
+ * Chromium: turns off the browser's address autofill, whose list (saved emails, Brave's "New Email
+ * Alias") covers our menu on email fields. It's off in the whole browser while we hold it; turned
+ * back on, `clear` gives the user's own setting back, as does uninstalling us. Needs "privacy",
+ * an optional permission asked for on the click.
+ *
+ * Why the background service worker sets it too: on some browsers the permission prompt takes
+ * focus and closes the popup. The popup's script dies with it, so `permissions.request` never
+ * resolves here and the `set` below never runs. The service worker outlives the popup and wakes on
+ * `permissions.onAdded`, so it turns the setting off once "privacy" is granted. When the popup does
+ * survive, both run; setting false twice is harmless.
+ */
+async function addressAutofillOption() {
+  const toggle = h("input", { type: "checkbox", checked: await addressAutofillOff().catch(() => false) });
+  toggle.addEventListener("change", async () => {
+    try {
+      if (!toggle.checked) await browser.privacy.services.autofillAddressEnabled.clear({});
+      // the request first: it needs the click. Its prompt may close the popup; the background then
+      // turns the setting off (permissions.onAdded)
+      else if (await browser.permissions.request({ permissions: ["privacy"] }))
+        await browser.privacy.services.autofillAddressEnabled.set({ value: false });
+      // what the browser says now: also unchecked when refused, or held by another extension
+      toggle.checked = await addressAutofillOff();
+    } catch (error) {
+      toggle.checked = await addressAutofillOff().catch(() => false);
+      await refresh(messageOf(error));
+    }
+  });
+  return h(
+    "label",
+    { class: "toggle" },
+    toggle,
+    h(
+      "span",
+      { class: "text" },
+      "Turn off browser addresses",
+      h("span", { class: "detail", textContent: "their list covers ours on email fields" }),
+    ),
+  );
+}
+
 async function footer(status: Status) {
   const settings: Settings = await send({ type: "get-settings" });
   const option: Option = (key, label, detail, disabled = false) => {
@@ -534,10 +582,13 @@ async function footer(status: Status) {
     { class: "settings" },
     h("h2", { textContent: "Suggestions" }),
     option("inlineMenu", "When signing in", "saved passwords"),
-    // Chromium only: Firefox has no passkey list over login fields
+    // Chromium only: Firefox has no passkey list over login fields, and no address autofill setting for extensions
     ...(import.meta.env.FIREFOX
       ? []
-      : [option("hidePasskeyList", "Passkeys", "an icon in the field instead of the browser's list")]),
+      : [
+          option("hidePasskeyList", "Passkeys", "an icon in the field instead of the browser's list"),
+          await addressAutofillOption(),
+        ]),
     option("oneTimeCodes", "Verification codes", "when a site asks for one"),
     option("generatePasswords", "When signing up", "strong passwords and emails"),
     option("hideMyEmail", "Hide My Email", "iCloud+ addresses, labeled with the site's name"),

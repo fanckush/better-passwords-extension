@@ -84,6 +84,10 @@ The browser opens its list only for a real click in the field, which no script c
 
 Leaving the field takes the token out again. We can't tell whether the user has a passkey for the site: the browser doesn't say.
 
+The browser's address autofill shows its own list on email fields too (saved emails, Brave's "New Email Alias"). No page attribute turns it off reliably, so the popup's **Turn off browser addresses** option asks for the optional `privacy` permission and sets `privacy.services.autofillAddressEnabled` to false, in the whole browser. Off again, it calls `clear()`, and the user's own setting is back (also when the extension is removed).
+
+Neither applies in a frame we don't run in, like Apple's sign-in on `idmsa.apple.com` inside `www.icloud.com` (another site): there the browser's lists show as usual.
+
 ## Icons in fields
 
 An icon of ours at the end of a field is a `FieldIcon` (`apps/extension/src/autofill/field-icon.ts`), placed by the pure `fieldIconLayout` (`field-icon-layout.ts`). Both are generic: the content script decides which field gets an icon and what a click on it does. The passkey icon is the first user.
