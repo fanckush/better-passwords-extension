@@ -207,6 +207,12 @@ export default defineBackground(() => {
     else if (state === "locked" && (await getSettings()).lockOnScreenLock) session.lock();
   });
 
+  // "privacy" is only for the popup's "Turn off browser addresses", so allowing it turns the browser's
+  // address autofill off: the browser's prompt closes the popup before it hears the answer
+  browser.permissions.onAdded.addListener(({ permissions }) => {
+    if (permissions?.includes("privacy")) void browser.privacy.services.autofillAddressEnabled.set({ value: false });
+  });
+
   // Chromium leaves open tabs without the content script after an update; Firefox injects it itself.
   // The old copy notices the new one and gets out of the way (WXT's ContentScriptContext).
   browser.runtime.onInstalled.addListener(async ({ reason }) => {

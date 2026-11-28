@@ -78,6 +78,8 @@ export default defineConfig({
         // while Hide My Email is on, sets icloud.com's Origin on our own requests to iCloud
         "declarativeNetRequestWithHostAccess",
       ],
+      // Chromium: asked for only when the user turns off the browser's address autofill in the popup
+      ...(browser === "firefox" ? {} : { optional_permissions: ["privacy"] }),
       // the inline menu reads the page's URL and runs on login pages
       host_permissions: FILL_MATCHES,
       // Chromium: reachable only at a per-session URL, so pages can't load (or probe for) the menu

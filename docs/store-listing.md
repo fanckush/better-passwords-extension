@@ -55,6 +55,7 @@ The product name is **Better Passwords**. Use the separate compatibility line:
 | `storage` | To remember the user's settings. |
 | `alarms` | To keep the connection to Apple's password helper alive, so the user isn't asked for a new code. |
 | `idle` | To lock when the computer's screen locks, if that's turned on (it is by default on Windows). |
+| `privacy` (optional) | Only when the user turns on "Turn off browser addresses" in the popup: turns off the browser's own address autofill, whose list covers the extension's suggestions on email fields. Turning the option off gives the user's own browser setting back. |
 | `declarativeNetRequestWithHostAccess` | Only for the opt-in Hide My Email feature: iCloud's web service accepts requests only with icloud.com's Origin, so while the user has it on, a session rule sets that header on the extension's own requests to iCloud. Websites' requests are never modified. |
 
 **Remote code:** No. All code ships in the package.
