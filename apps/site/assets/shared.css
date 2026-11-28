@@ -38,7 +38,6 @@
   --ui-sep: rgb(0 0 0 / 10%);
   --ui-page-1: #fbfbfd;
   --ui-page-2: #f1f1f5;
-  --ui-avatar: #d1d1d6;
   --fill-bg: #e8f0fe;
   --fill-line: #8ab4f8;
   --tip-bg: #1d1d1f;
@@ -86,7 +85,6 @@
     --ui-sep: rgb(255 255 255 / 12%);
     --ui-page-1: #1c1c1e;
     --ui-page-2: #141415;
-    --ui-avatar: #636366;
     --fill-bg: rgb(138 180 248 / 18%);
     --tip-bg: #f5f5f7;
     --tip-ink: #1d1d1f;
@@ -516,17 +514,49 @@ svg.fp {
 .dm-pop-row:hover {
   background: var(--ui-hover);
 }
-.dm-pop-row i {
+/* A login's initial, with the tile of the password manager it's from (kit.js, avatar()). */
+.dm-av {
+  position: relative;
   width: 24px;
   height: 24px;
   flex: none;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: var(--ui-avatar);
+  background: #8e8e93;
   color: #fff;
   font: 700 11px var(--font);
-  font-style: normal;
+}
+.dm-av .dm-src {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 3.5px;
+  box-shadow: 0 0 0 1.5px var(--badge-ring, var(--ui-well));
+}
+.dm-av .dm-src svg,
+.dm-row .dm-av .dm-src svg {
+  width: 8px;
+  height: 8px;
+  fill: #fff;
+}
+.dm-menu .dm-av {
+  --badge-ring: var(--ui-menu);
+}
+.dm-row[aria-selected="true"] .dm-av {
+  --badge-ring: var(--blue);
+  background: #fff;
+  color: var(--blue);
+}
+.dm-tile-apple {
+  background: linear-gradient(180deg, #8e8e93, #48484a);
+}
+.dm-tile-bitwarden {
+  background: linear-gradient(180deg, #3b7ff0, #175ddc);
 }
 .dm-pop-recent {
   display: flex;

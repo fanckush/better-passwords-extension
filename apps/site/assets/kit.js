@@ -175,7 +175,28 @@ globalThis.Kit = (() => {
   const PERSON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>`;
   const EYE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/></svg>`;
   const EYE_OFF = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/><path d="m4 4 16 16"/></svg>`;
-  const LOGINS = ["jane@example.com", "jane.ops@example.com"];
+  // One login from each password manager, so the demo shows what mixing them looks like: an initial
+  // with its manager's tile, as the real menu and popup show logins from more than one account.
+  // The glyphs are the extension's own (src/ui/icons.ts), not the providers' logos.
+  const PROVIDERS = {
+    apple: {
+      label: "Apple Passwords",
+      glyph:
+        "M12 1.75a5.25 5.25 0 0 1 1.5 10.28v1.72h1.9a.6.6 0 0 1 .6.6v1.3a.6.6 0 0 1-.6.6h-1.9v.75h1.4a.6.6 0 0 1 .6.6v1.3a.6.6 0 0 1-.6.6h-1.4v.6a.8.8 0 0 1-.23.56l-.7.7a.8.8 0 0 1-1.14 0l-.7-.7a.8.8 0 0 1-.23-.56v-8.15A5.25 5.25 0 0 1 12 1.75Zm0 2.25a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5Z",
+    },
+    bitwarden: {
+      label: "Bitwarden",
+      glyph:
+        "M11.7 2.08a.75.75 0 0 1 .6 0l7.5 3.2a.75.75 0 0 1 .45.69v5.3c0 4.9-3.2 9.05-8.05 10.67a.75.75 0 0 1-.4 0C6.95 20.32 3.75 16.17 3.75 11.27v-5.3a.75.75 0 0 1 .45-.69l7.5-3.2Z",
+    },
+  };
+  const LOGINS = [
+    { user: "jane@example.com", from: "apple" },
+    { user: "jane.ops@example.com", from: "bitwarden" },
+  ];
+  const sourceTile = (id, cls = "dm-src") =>
+    `<span class="${cls} dm-tile-${id}" role="img" aria-label="${PROVIDERS[id].label}" title="From ${PROVIDERS[id].label}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="${PROVIDERS[id].glyph}"/></svg></span>`;
+  const avatar = ({ user, from }) => `<span class="dm-av">${user[0].toUpperCase()}${sourceTile(from)}</span>`;
   const pick = (s) => s[Math.floor(Math.random() * s.length)];
   // Illustrative only: the real addresses and passwords come from iCloud and the extension.
   const hideMyEmail = () =>
@@ -370,9 +391,15 @@ globalThis.Kit = (() => {
       if (mode === "signin")
         return settings.inline
           ? [
-              ...logins.map((u) => ({ kind: "login", icon: KEY, title: u, sub: "example.com", value: u })),
+              ...logins.map((l) => ({
+                kind: "login",
+                icon: avatar(l),
+                title: l.user,
+                sub: "example.com",
+                value: l.user,
+              })),
               { sep: true },
-              { kind: "app", title: "Open Passwords App…" },
+              ...Object.values(PROVIDERS).map((p) => ({ kind: "app", title: `Open ${p.label}` })),
             ]
           : [];
       if (field === email) {
@@ -584,14 +611,16 @@ globalThis.Kit = (() => {
       emit("demo:mode", { mode: m });
     }
 
-    // Mirrors the real popup: the site's logins, recent passwords, Open Passwords App, then settings.
+    // Mirrors the real popup: the site's logins, recent passwords, each password manager, then settings.
     function renderPopup() {
       popup.innerHTML = isLocked
         ? `<div class="dm-pop-h">Better Passwords</div><p class="dm-pop-p">Locked. Click a field on the page to unlock it.</p>`
         : `<div class="dm-pop-h">example.com</div>
-           <ul class="dm-pop-logins">${logins.map((u) => `<li><button type="button" class="dm-pop-row" data-user="${u}" title="Fill ${u}"><i>${u[0].toUpperCase()}</i>${u}</button></li>`).join("")}</ul>
+           <ul class="dm-pop-logins">${logins.map((l) => `<li><button type="button" class="dm-pop-row" data-user="${l.user}" title="Fill ${l.user}">${avatar(l)}${l.user}</button></li>`).join("")}</ul>
            ${recent.length ? `<div class="dm-pop-sec"><h5>Recent passwords</h5><ul class="dm-pop-logins">${recent.map((r, i) => `<li class="dm-pop-recent"><span>${r.user}</span><button type="button" data-copy="${i}">Copy</button></li>`).join("")}</ul><p class="dm-pop-hint">New passwords from this session, in case one wasn't saved.</p></div>` : ""}
-           <button type="button" class="dm-pop-link">Open Passwords App</button>
+           ${Object.values(PROVIDERS)
+             .map((p) => `<button type="button" class="dm-pop-link">Open ${p.label}</button>`)
+             .join("")}
            ${settingsHTML()}`;
       popup.insertAdjacentHTML("beforeend", popupFooter());
       bindSettings(popup);

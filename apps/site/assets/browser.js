@@ -3,8 +3,8 @@
 //   <a data-add>      primary button. Gets the store link, `Get for <Browser>`, and the logo.
 //   <a data-other>    secondary store link for the other browser.
 //   [data-browser]    replaced with the browser's name, for headlines.
-//   [data-note]       replaced with a line for Safari or non-Mac visitors; left alone otherwise.
-// Preview another browser with ?browser=firefox|chrome|edge|brave|arc|safari|windows.
+//   [data-note]       replaced with a line for Safari, Windows, Linux or phone visitors; left alone otherwise.
+// Preview another browser with ?browser=firefox|chrome|edge|brave|arc|safari|windows|linux.
 
 (() => {
   // Store listings (README.md links the same pages).
@@ -80,6 +80,7 @@
     chromium: "Chrome",
     safari: "Chrome",
     windows: "Chrome",
+    linux: "Chrome",
   };
   const found = detect();
   const id = found.id in NAMES ? found.id : "chrome";
@@ -87,9 +88,13 @@
   const firefox = id === "firefox";
   const mac = query ? query !== "windows" : /Mac/.test(navigator.platform) || /Mac OS X/.test(ua);
   const windows = query ? query === "windows" : /Win/.test(navigator.platform) || /Windows NT/.test(ua);
+  // Linux and ChromeOS computers, not Android phones: Bitwarden works there, Apple Passwords doesn't
+  const linux = query
+    ? query === "linux"
+    : (/Linux/.test(navigator.platform) || /CrOS/.test(ua)) && !/Android/.test(ua);
   const logo = firefox
     ? "logo-firefox"
-    : id === "chrome" || id === "safari" || id === "windows"
+    : id === "chrome" || id === "safari" || id === "windows" || id === "linux"
       ? "logo-chrome"
       : "logo-browser";
 
@@ -115,10 +120,12 @@
     id === "safari"
       ? "You're in Safari, which already fills from Apple Passwords. This brings the same to Chrome and Firefox."
       : windows
-        ? "On Windows, it needs iCloud for Windows with Passwords turned on. Works in Chrome, Edge, Brave and Firefox."
-        : !mac
-          ? "Better Passwords is for Mac and Windows. Open this page on your computer to install it."
-          : null;
+        ? "Free and open source. On Windows, Apple Passwords needs iCloud for Windows with Passwords turned on. Bitwarden works as is."
+        : linux
+          ? "Free and open source. On Linux, it works with Bitwarden. Apple Passwords needs a Mac or Windows."
+          : !mac
+            ? "Better Passwords is a browser extension for your computer. Open this page there to install it."
+            : null;
   document.querySelectorAll("[data-browser]").forEach((el) => {
     el.textContent = name;
   });

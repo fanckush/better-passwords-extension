@@ -1,13 +1,18 @@
 # Architecture
 
-Better Passwords is a browser extension that reads logins from Apple Passwords (iCloud Keychain) on macOS and Windows. It doesn't store passwords and doesn't run a server: every request goes to Apple's own helper program, which ships with macOS 14 and later, and with iCloud for Windows.
+Better Passwords is a browser extension that fills and saves logins from the password managers the user adds to it:
+- **Apple Passwords** (iCloud Keychain) on macOS and Windows. It stores no passwords: every request goes to Apple's own helper program, which ships with macOS 14 and later, and with iCloud for Windows.
+- **Bitwarden** (bitwarden.com, bitwarden.eu or a self-hosted server). Bitwarden has nothing on the computer to ask, so the extension is a Bitwarden client: it signs in, keeps the encrypted vault, and decrypts it in memory while unlocked. See [bitwarden.md](bitwarden.md).
+
+It runs no server of its own.
 
 ```
 popup · inline menu (our extension pages)      autofill content script (on login pages)
    │ runtime messages                              │ one read-only question: "show a menu here?"
    ▼                                               ▼
-background worker ─── Accounts: every connected password manager (one so far)
-   │                       └─ AppleAccount ─── Session: one connection, kept open all browser session
+background worker ─── Accounts: every connected password manager
+   │                       ├─ AppleAccount ─── Session: one connection, kept open all browser session
+   │                       └─ BitwardenAccount (one per Bitwarden account) ─── fetch ──▶ Bitwarden's server
    │ runtime.connectNative(host)
    ▼
 Apple's PasswordManagerBrowserExtensionHelper   ← launched by the browser itself
@@ -22,6 +27,9 @@ Apple Passwords / iCloud Keychain
 |---|---|
 | `packages/protocol` | Client for the helper's protocol: SRP-6a pairing, the AES-GCM channel, login and password queries. Pure TypeScript with no browser APIs, so it is unit-tested directly. |
 | `packages/fake-helper` | A test double of Apple's helper. Used in-process by unit tests and as a real native-messaging host by the e2e tests. |
+| `packages/bitwarden` | Bitwarden client: the KDFs (PBKDF2, Argon2id through `hash-wasm`), EncStrings, sign-in with its code steps, sync, saving, and Bitwarden's URI matching. Pure TypeScript with `fetch` passed in. |
+| `packages/fake-bitwarden` | An in-memory Bitwarden server, for unit tests and (through Playwright's routing) e2e tests. |
+| `packages/otp` | Verification codes (TOTP, `otpauth://`, Steam), shared by Bitwarden and the fake helper. |
 | `apps/extension` | The WXT extension: background worker, popup, the page-fill function, and the browser packages. |
 | `apps/companion` | The optional Touch ID companion app (Swift). See [companion.md](companion.md). |
 | `scripts/setup-mac.sh` | One-time browser setup on macOS (see below). |
@@ -29,14 +37,23 @@ Apple Passwords / iCloud Keychain
 
 ## Accounts
 
-The extension doesn't talk to Apple Passwords directly: it talks to *accounts* (`src/accounts/`). An account is one connected password manager, an instance of a provider. Today there is one, Apple Passwords (`src/accounts/apple/`), but nothing outside the adapter assumes that, so another provider, or two accounts of the same one, can be added without touching the rest.
+The extension doesn't talk to Apple Passwords directly: it talks to *accounts* (`src/accounts/`). An account is one connected password manager, an instance of a provider: Apple Passwords (`src/accounts/apple/`, at most one) and Bitwarden (`src/accounts/bitwarden/`, one per Bitwarden account). Nothing outside an adapter knows which provider an account is, so another provider can be added without touching the rest.
 
-- `src/accounts/types.ts` is what an account does: its status in provider-neutral words (`needs-setup`, `unavailable`, `offline`, `locked`, `unlocking`, `unlocked`), how it unlocks (`pairing-code` for Apple; the screen to show depends on this), what it can do (`capabilities`), and its logins, codes and saving. Each adapter maps its provider's quirks onto that. For Apple, that covers the helper's states, the stand-in tab its lookups use, and the companion app entering the code.
-- `src/accounts/registry.ts` (`Accounts`) holds the accounts. Reads go to every unlocked account and are merged. Each login or code carries a `ref` naming its account and its id there, so filling it goes back to that account. Saving a new login goes to one account, picked in one place (`saveTarget`). Per-account settings (`lockOnScreenLock`, `touchId`) are kept under `accounts` in local storage. Older versions kept them in `settings`, and they're moved over once.
-- Pages get `Status.accounts` and show whatever unlock screen each account's `unlock.kind` calls for. With one account, they show no account names.
+- `src/accounts/types.ts` is what an account does: its status in provider-neutral words (`needs-setup`, `unavailable`, `offline`, `locked`, `unlocking`, `unlocked`), how it unlocks (`pairing-code` for Apple, `password` for Bitwarden; the screen to show depends on this), what it can do (`capabilities`), and its logins, codes and saving. Each adapter maps its provider's quirks onto that. For Apple, that covers the helper's states, the stand-in tab its lookups use, and the companion app entering the code.
+- `src/accounts/registry.ts` (`Accounts`) holds the accounts. Reads go to every unlocked account and are merged. Each login or code carries a `ref` naming its account and its id there, so filling it goes back to that account. Saving goes to one account, picked in one place (`saveTarget`): a new password for a username goes to the unlocked account that has that username for the site, and a new login to the one chosen under "Save new logins to" in the popup (else the first unlocked one that can save). Per-account settings (`lockOnScreenLock`, `touchId`) are kept under `accounts` in local storage. Older versions kept them in `settings`, and they're moved over once.
+- Pages get `Status.accounts` and show whatever unlock screen each account's `unlock.kind` calls for. With one account, they show no account names; with more, each login carries a small badge of its provider.
+- The accounts themselves are a list in local storage (provider and id), managed from the setup page (`entrypoints/setup/`): add one from the provider picker, sign in again, or remove one, which forgets everything kept for it. Existing installs start with Apple Passwords, as before.
 - `test/support/memory-account.ts` is a second kind of account (password unlock, real item ids), used only by unit tests to keep the registry honest.
 
 Email aliases are separate from accounts (`src/aliases/`): they work with any password manager. Hide My Email is the one `AliasProvider` so far (`src/aliases/icloud/`).
+
+## Saving to accounts that don't ask
+
+macOS asks before Apple's helper saves anything, so for Apple the extension just hands the login over. Bitwarden saves whatever it's sent, so for Bitwarden the extension asks first, with a card in the page (`entrypoints/save/`, framed by the content script like the menu, with its own nonce): Save, Not Now, or Never for this site. Which one happens depends on the account's `asksBeforeSaving` capability, not its provider (`offerSave` in `entrypoints/background.ts`).
+
+## Unlocking Bitwarden
+
+A Bitwarden account unlocks with its master password, typed in the popup (or in a small window of its own where the popup can't open, as on Firefox from the menu). The inline menu never takes it, since it lives inside a web page: its unlock row opens the popup. Once unlocked, the vault key is kept in `storage.session`, so a restarted background worker stays unlocked, and the account locks after its idle time, on Lock, or when the browser quits. The vault syncs on unlock and, when it's been a minute, the next time it's used. See the [threat model](threat-model.md#bitwarden).
 
 ## One identity, separate browser packages
 
@@ -51,6 +68,8 @@ Chromium builds carry the Chrome Web Store's public key, so unpacked builds get 
 The helper's code signature has *parent launch constraints*: macOS kills it unless an approved browser is its parent process. So a helper of ours cannot sit between the browser and Apple's helper. The extension always talks to Apple's helper directly. Native code of ours, such as the [Touch ID companion](companion.md), runs beside it, never in front of it.
 
 ## First run
+
+A fresh install that can't reach Apple's helper yet opens `setup.html`, which asks which password manager the user has. Bitwarden's setup is its sign-in. Apple's is below.
 
 Until the bridge is registered, connecting fails with the browser's "host not found", and the extension treats that as "not set up yet", not as an error. A fresh install that can't reach the helper opens `setup.html`; password fields offer "Set Up Better Passwords", which opens the same page; and the popup shows the same flow (`src/ui/setup.ts`). It offers the companion app or the setup command, retries the connection every 1.5 seconds while on screen, and says when it worked. That is said once, even if the popup closed while the user ran the command: the background remembers that setup was pending until the user sees it or unlocks. On Windows it offers the PowerShell command instead (there's no companion app). On anything else, it only says that a Mac or a PC is needed.
 
@@ -98,11 +117,18 @@ Leaving the field takes the token out again. We can't tell whether the user has 
 
 ## Icons in fields
 
-An icon of ours at the end of a field is a `FieldIcon` (`apps/extension/src/autofill/field-icon.ts`), placed by the pure `fieldIconLayout` (`field-icon-layout.ts`). Both are generic: the content script decides which field gets an icon and what a click on it does. The passkey icon is the first user.
+An icon of ours at the end of a field is a `FieldIcon` (`apps/extension/src/autofill/field-icon.ts`), placed by the pure `fieldIconLayout` (`field-icon-layout.ts`). Both are generic: the content script decides which field gets an icon and what a click on it does. The passkey icon and minimal mode's icon use it.
 - **Clicks pass through.** The icon has `pointer-events: none`, so a click on it is the user's click on the field. The content script's capture `mousedown` asks `hits()` and acts before the browser handles the click. The page has nothing of ours to click, cover or fake clicks on.
 - **Layout follows the field:** size from its font and height (14–20 px), inside its border and padding, clear of rounded corners, centred vertically, at the left end in a right-to-left field, in the field's text colour, faded. One icon per field so far: a second one would need an offset in `fieldIconLayout`. The layout cases are unit tested in `field-icon-layout.test.ts`, and measured on real fields in `e2e/passkey-list.spec.ts` with `e2e/pages/passkey-fields.html`.
 - **Hidden where a click wouldn't reach the field:** off screen, too small, or something of the page's on top at the icon's spot.
 - **The menu's visibility check must know about it.** The icon is in the top layer, which the check reads as the page covering the menu, so `MenuHost` takes our own top-layer elements (`ours`) to ignore. Pass any new icon's element there too.
+
+## Minimal mode
+
+An opt-in setting (`minimalMode`, off by default) for people who don't want a menu on every field. The menu then never opens by itself: on a field that would get one, the content script puts an icon at the field's end instead, and a click on it (or ↓) opens the menu. Another click on the icon closes it.
+- **Same answer, different trigger.** The background's `autofill-status` answer is unchanged, plus `icon` in minimal mode. The content script shows the icon wherever it would have opened a menu, so the icon appears only where there's something to offer.
+- **Which icon:** the provider's glyph when one account can fill (see `PROVIDER_GLYPHS` in `ui/icons.ts`), ours (`BRAND`) for several. It depends on the connected accounts, not the site, so it looks the same everywhere.
+- **Focused field only.** The icon shows on the focused field, and stays while focus is in its menu. It replaces the passkey icon on that field, as the menu offers the browser's passkey list.
 
 ## Filling (popup)
 

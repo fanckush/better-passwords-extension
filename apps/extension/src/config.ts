@@ -1,7 +1,13 @@
 // Shared product identity. Browser packages and download routes use the same configuration.
 
 export const DISPLAY_NAME = "Better Passwords";
-export const STORE_TITLE = "Better Passwords - for Apple Passwords";
+/** The stores' title. Other password managers go in the description, never the name (their trademark rules). */
+export const STORE_TITLE = "Better Passwords – Autofill for Apple Passwords & more";
+/** Firefox Add-ons allows 50 characters. */
+export const FIREFOX_STORE_TITLE = "Better Passwords – Apple Passwords & more";
+/** The stores' summary (Chrome allows 132 characters). */
+export const STORE_SUMMARY =
+  "Fill and save logins from Apple Passwords or Bitwarden, with suggestions right in login fields.";
 
 export const REPO_URL = "https://github.com/fanckush/better-passwords-extension";
 /** Where problems can be reported without a GitHub account. */

@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Use Bitwarden with Better Passwords – a simpler autofill for Chrome &amp; Firefox</title>
+<meta name="description" content="Fill and save your Bitwarden logins from a small menu under the field, in Chrome, Edge, Brave, Arc and Firefox on Mac, Windows and Linux. Works with bitwarden.com, bitwarden.eu and self-hosted servers, and next to Apple Passwords." />
+<link rel="canonical" href="https://betterpasswords.app/bitwarden" />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)" />
+<link rel="icon" href="icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="apple-touch-icon.png" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Better Passwords" />
+<meta property="og:url" content="https://betterpasswords.app/bitwarden" />
+<meta property="og:title" content="Use Bitwarden with Better Passwords" />
+<meta property="og:description" content="Your Bitwarden logins in a small menu under the field. Cloud or self-hosted, on Mac, Windows and Linux, and next to Apple Passwords if you use both. Free and open source." />
+<meta property="og:image" content="https://betterpasswords.app/og.png" />
+<meta name="twitter:card" content="summary_large_image" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Better Passwords", "item": "https://betterpasswords.app/" },
+        { "@type": "ListItem", "position": 2, "name": "Bitwarden", "item": "https://betterpasswords.app/bitwarden" }
+      ]
+    },
+    {
+      "@type": "HowTo",
+      "name": "Set up Better Passwords with Bitwarden",
+      "step": [
+        { "@type": "HowToStep", "text": "Add Better Passwords from the Chrome Web Store or Firefox Add-ons." },
+        { "@type": "HowToStep", "text": "In the setup tab that opens, choose Bitwarden." },
+        { "@type": "HowToStep", "text": "Pick your server: bitwarden.com, bitwarden.eu, or your own server's address." },
+        { "@type": "HowToStep", "text": "Sign in with your email and master password, and enter your two-step login code if you use one." },
+        { "@type": "HowToStep", "text": "Click a login field: your Bitwarden logins show up in a menu under it." }
+      ]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        { "@type": "Question", "name": "Is this made by Bitwarden?", "acceptedAnswer": { "@type": "Answer", "text": "No. Better Passwords is an independent, open-source extension. It signs in to your Bitwarden account the way Bitwarden's own apps do." } },
+        { "@type": "Question", "name": "Can I keep Bitwarden's extension installed?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, but both would open a menu on the same field. In Bitwarden's extension, go to Settings, then Autofill, and turn off Show autofill suggestions on form fields." } },
+        { "@type": "Question", "name": "Does it work with a self-hosted Bitwarden server?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Choose self-hosted and type your web vault's address. A plain http:// address works too, for a server at home or on your own network. Vaultwarden isn't tested yet." } },
+        { "@type": "Question", "name": "Do I need Bitwarden Premium?", "acceptedAnswer": { "@type": "Answer", "text": "No. It works with free and paid Bitwarden accounts." } },
+        { "@type": "Question", "name": "Which two-step login methods work?", "acceptedAnswer": { "@type": "Answer", "text": "Codes from an authenticator app and codes sent by email. Security keys, Duo and single sign-on aren't supported yet." } },
+        { "@type": "Question", "name": "Does it work on Linux?", "acceptedAnswer": { "@type": "Answer", "text": "Yes. Bitwarden works anywhere Chrome or Firefox runs. Only Apple Passwords needs a Mac or Windows." } }
+      ]
+    }
+  ]
+}
+</script>
+<link rel="stylesheet" href="assets/shared.css" />
+<style>
+  /* A sub-page of the extension's site, like /companion: one column, back to the main page at the top.
+     A little wider, so the demo window fits. */
+  .page { max-width: 680px; margin: 0 auto; padding: 40px 24px 96px; }
+  .back { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); font: 500 15px var(--font); }
+  .back:hover { text-decoration: none; opacity: 0.8; }
+  .back img { width: 24px; height: 24px; }
+  .title { display: flex; align-items: center; gap: 14px; margin: 64px 0 12px; }
+  .title .mgr-tile { width: 48px; height: 48px; border-radius: 11px; }
+  .title .mgr-tile svg { width: 30px; height: 30px; }
+  h1 { margin: 0; font: 700 clamp(32px, 4vw, 44px)/1.08 var(--display); letter-spacing: -0.03em; }
+  .page .lede { margin-bottom: 28px; }
+  .mgr-tile { display: grid; place-items: center; flex: none; background: linear-gradient(180deg, #3b7ff0, #175ddc); box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 12%), 0 2px 6px rgb(0 0 0 / 12%); }
+  .mgr-tile svg { fill: #fff; }
+  .try { margin: 56px 0 0; }
+  h2 { margin: 64px 0 14px; font: 600 24px/1.2 var(--display); letter-spacing: -0.015em; }
+  .page p, .page ol, .page ul { font-size: 17px; line-height: 1.55; }
+  .page p { margin: 0 0 14px; color: var(--muted); }
+  .page p b, .page li b { color: var(--ink); font-weight: 600; }
+  .page ol, .page ul { margin: 0 0 14px; padding-left: 1.3em; color: var(--muted); }
+  .page li + li { margin-top: 8px; }
+  .page .faq summary { padding: 18px 0; font-size: 18px; }
+  .page .faq p { margin: 0 0 18px; }
+  .closing { margin-top: 72px; padding: 40px 28px; border-radius: 22px; background: var(--alt); text-align: center; }
+  .closing h2 { margin: 0 0 10px; }
+  .closing .ctas { justify-content: center; margin-top: 24px; }
+</style>
+</head>
+<body>
+<main class="page">
+  <a class="back" href="/"><img src="icon.svg" alt="" />Better Passwords</a>
+
+  <div class="title">
+    <span class="mgr-tile"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11.7 2.08a.75.75 0 0 1 .6 0l7.5 3.2a.75.75 0 0 1 .45.69v5.3c0 4.9-3.2 9.05-8.05 10.67a.75.75 0 0 1-.4 0C6.95 20.32 3.75 16.17 3.75 11.27v-5.3a.75.75 0 0 1 .45-.69l7.5-3.2Z"/></svg></span>
+    <h1>Use Bitwarden with Better&nbsp;Passwords</h1>
+  </div>
+  <p class="lede">Your Bitwarden logins in a small menu under the field, strong passwords on sign-up forms, and your verification codes. Cloud or self-hosted, and next to Apple Passwords if you use both.</p>
+  <div class="ctas">
+    <a class="add" data-add href="/"><svg data-logo aria-hidden="true"></svg><span data-label>Add to Chrome</span></a>
+    <a class="other" data-other href="/"><svg data-logo aria-hidden="true"></svg><span data-label>Also for Firefox</span></a>
+  </div>
+  <p class="note">Free and open source. Chrome, Edge, Brave, Arc and Firefox, on Mac, Windows and Linux.</p>
+
+  <div class="try"><div id="demo"></div></div>
+
+  <h2>Why not Bitwarden's own extension?</h2>
+  <p>Keep it if you like it. Bitwarden's extension puts your whole vault in the toolbar: cards, identities, notes, Sends and folders, each with its own screens and settings.</p>
+  <p>Better Passwords only fills and saves logins, from a menu that looks like the one macOS uses for Apple Passwords. Everything else stays in Bitwarden's apps and web vault, where you already manage it.</p>
+  <p>It's a good fit if you:</p>
+  <ul>
+    <li>want autofill that shows up when you need it and stays out of the way otherwise</li>
+    <li>use Apple Passwords too, or are moving from one to the other: <b>logins from both show up in one menu</b></li>
+    <li>want iCloud's <b>Hide My Email</b> in sign-up forms (needs iCloud+)</li>
+    <li>run your own Bitwarden server</li>
+  </ul>
+
+  <h2>Set it up</h2>
+  <ol>
+    <li>Add Better Passwords from the <a href="https://chromewebstore.google.com/detail/better-passwords/ocongmkplhijgajnipnhhggfcjfdilgj">Chrome Web Store</a> or <a href="https://addons.mozilla.org/firefox/addon/better-passwords/">Firefox Add-ons</a>.</li>
+    <li>In the setup tab that opens, choose <b>Bitwarden</b>.</li>
+    <li>Pick your server: <b>bitwarden.com</b>, <b>bitwarden.eu</b>, or <b>self-hosted</b> with your server's address.</li>
+    <li>Sign in with your email and master password. If you use two-step login, enter the code from your authenticator app or email.</li>
+    <li>Click a login field. Your Bitwarden logins show up in a menu under it.</li>
+  </ol>
+  <p>Bitwarden emails you about a new device the first time you sign in. That's Better Passwords.</p>
+  <p>After that, it locks when you quit the browser or your computer locks, and you unlock it with your master password from the toolbar. You can change both in the toolbar popup.</p>
+
+  <h2>Self-hosted servers</h2>
+  <p>Choose <b>self-hosted</b> and type the address you open your web vault at, like <b>https://vault.example.com</b>. A plain <b>http://</b> address works too, for a server at home or on your own network: the browser asks you to allow that one address.</p>
+  <p>Vaultwarden isn't tested yet. If you try it, <a href="https://github.com/fanckush/better-passwords-extension/issues" target="_blank" rel="noopener">tell us how it went</a>.</p>
+
+  <h2>Is it safe?</h2>
+  <p>Better Passwords signs in to your Bitwarden server the way Bitwarden's own apps do. Your master password never leaves your computer: only a hash of it is sent, as Bitwarden's apps send it. Your vault is kept encrypted on your computer, like Bitwarden's extension keeps it, and is opened only while unlocked.</p>
+  <p>It talks only to your Bitwarden server. There's no account with us, no server of ours and no tracking. What's sent is in the <a href="https://github.com/fanckush/better-passwords-extension/blob/main/PRIVACY.md" target="_blank" rel="noopener">privacy policy</a>, how your vault key is kept safe is in the <a href="https://github.com/fanckush/better-passwords-extension/blob/main/docs/threat-model.md#bitwarden" target="_blank" rel="noopener">threat model</a>, and the code is <a href="https://github.com/fanckush/better-passwords-extension" target="_blank" rel="noopener">public on GitHub</a>.</p>
+
+  <h2>Questions</h2>
+  <div class="faq">
+    <details><summary>Is this made by Bitwarden?</summary><p>No. Better Passwords is an independent, open-source extension. It signs in to your Bitwarden account the way Bitwarden's own apps do.</p></details>
+    <details><summary>Can I keep Bitwarden's extension installed?</summary><p>Yes, but both would open a menu on the same field. In Bitwarden's extension, go to <b>Settings</b> → <b>Autofill</b> and turn off <b>Show autofill suggestions on form fields</b>.</p></details>
+    <details><summary>Do I need Bitwarden Premium?</summary><p>No. It works with free and paid Bitwarden accounts.</p></details>
+    <details><summary>Do logins shared with me show up?</summary><p>Yes, logins from organizations you're in show up next to your own. New logins are saved to your own vault.</p></details>
+    <details><summary>Which two-step login methods work?</summary><p>Codes from an authenticator app and codes sent by email. Security keys, Duo and single sign-on aren't supported yet.</p></details>
+    <details><summary>Does it work on Linux?</summary><p>Yes. Bitwarden works anywhere Chrome or Firefox runs. Only Apple Passwords needs a Mac or Windows.</p></details>
+    <details><summary>Can I use Apple Passwords too?</summary><p>Yes. Add it from the toolbar popup (<b>Manage…</b>), and logins from both show up in one menu, each with a small tile saying where it's from. <a href="/">More about Apple Passwords</a>.</p></details>
+  </div>
+
+  <div class="closing">
+    <h2>Try it with your vault.</h2>
+    <p>Free and open source. Your logins stay in Bitwarden.</p>
+    <div class="ctas">
+      <a class="add" data-add href="/"><svg data-logo aria-hidden="true"></svg><span data-label>Add to Chrome</span></a>
+      <a class="other" data-other href="/"><svg data-logo aria-hidden="true"></svg><span data-label>Also for Firefox</span></a>
+    </div>
+  </div>
+</main>
+<footer class="foot">
+  <div class="wrap">
+    <p><a href="/">Better Passwords</a><a href="/companion">Mac app</a><a href="https://github.com/fanckush/better-passwords-extension">Source code</a><a href="https://github.com/fanckush/better-passwords-extension/blob/main/PRIVACY.md">Privacy</a><a href="https://github.com/fanckush/better-passwords-extension/blob/main/SECURITY.md">Security</a></p>
+    <p>Better Passwords is not affiliated with or endorsed by Bitwarden, Inc. or Apple Inc. Bitwarden is a trademark of Bitwarden, Inc. Apple, iCloud, iCloud+ and Touch ID are trademarks of Apple Inc.</p>
+  </div>
+</footer>
+
+<script src="assets/browser.js"></script>
+<script src="assets/kit.js"></script>
+<script src="assets/bitwarden.js"></script>
+</body>
+</html>

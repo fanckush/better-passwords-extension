@@ -3,7 +3,15 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "wxt";
-import { DISPLAY_NAME, EXTENSION_PUBLIC_KEY, FILL_MATCHES, FIREFOX_EXTENSION_ID, STORE_TITLE } from "./src/config.ts";
+import {
+  DISPLAY_NAME,
+  EXTENSION_PUBLIC_KEY,
+  FILL_MATCHES,
+  FIREFOX_EXTENSION_ID,
+  FIREFOX_STORE_TITLE,
+  STORE_SUMMARY,
+  STORE_TITLE,
+} from "./src/config.ts";
 
 const EXTENSION_CSP =
   // wasm: Argon2id, for Bitwarden accounts that derive their key with it (hash-wasm)
@@ -69,9 +77,9 @@ export default defineConfig({
   },
   manifest: ({ browser }) => {
     return {
-      name: STORE_TITLE,
+      name: browser === "firefox" ? FIREFOX_STORE_TITLE : STORE_TITLE,
       short_name: DISPLAY_NAME,
-      description: "Fill passwords from Apple Passwords, pairing far less often.",
+      description: STORE_SUMMARY,
       permissions: [
         "nativeMessaging",
         "storage",
@@ -107,7 +115,10 @@ export default defineConfig({
               gecko: {
                 id: FIREFOX_EXTENSION_ID,
                 strict_min_version: "142.0",
-                // Mozilla's transmission rules include the local native password helper.
+                // Mozilla's transmission rules include the local native password helper. Bitwarden
+                // gets the same two: the account's email and password hash, tokens and the
+                // encrypted vault (authentication), and saved logins' site addresses (browsing).
+                // The optional ones are Hide My Email's, asked for when it's turned on.
                 data_collection_permissions: {
                   required: ["authenticationInfo", "browsingActivity"],
                   optional: ["personallyIdentifyingInfo", "websiteContent"],

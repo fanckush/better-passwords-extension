@@ -1,6 +1,6 @@
 # Better Passwords
 
-> A free, open-source browser extension for macOS that fills logins from Apple Passwords (iCloud Passwords, iCloud Keychain) in Chrome, Edge, Brave, Arc and Firefox. It is an alternative to Apple's own iCloud Passwords extension. Not affiliated with or endorsed by Apple Inc.
+> A free, open-source browser extension that fills logins from Apple Passwords (iCloud Passwords, iCloud Keychain) and from Bitwarden in Chrome, Edge, Brave, Arc and Firefox. It is an alternative to Apple's own iCloud Passwords extension. Not affiliated with or endorsed by Apple Inc.
 
 How it differs from Apple's iCloud Passwords extension:
 
@@ -9,16 +9,19 @@ How it differs from Apple's iCloud Passwords extension:
 - Suggests strong passwords right in sign-up fields, instead of opening the Passwords app.
 - Offers Hide My Email addresses (iCloud+) and the emails from your contact card in sign-up forms.
 - Runs on Mac (macOS 14 or later) and on Windows with iCloud for Windows, like Apple's extension. Touch ID and the companion app are Mac only.
-- Not on Linux: Apple's password helper only comes with macOS and iCloud for Windows.
+- Apple Passwords isn't available on Linux: Apple's password helper only comes with macOS and iCloud for Windows. Bitwarden is.
 
 Like Apple's extension, it fills two-factor verification codes saved in Apple Passwords, after Touch ID.
 
-Privacy: passwords stay in Apple Passwords on the Mac. The extension asks the password helper built into macOS for the login the user picks, over Apple's own encrypted pairing, fills it, and stores nothing. There are no accounts, no servers and no analytics. Hide My Email talks to the user's iCloud account, and only once it is turned on.
+It also works with Bitwarden (bitwarden.com, bitwarden.eu or a self-hosted server), on its own or next to Apple Passwords: the same inline menu, password suggestions and verification codes. The extension signs in to Bitwarden as a client, keeps the vault encrypted on the device, and unlocks it with the master password. Bitwarden works on Linux too. Not affiliated with or endorsed by Bitwarden, Inc.
+
+Privacy: passwords stay in Apple Passwords on the Mac. The extension asks the password helper built into macOS for the login the user picks, over Apple's own encrypted pairing, fills it, and stores nothing. There are no accounts, servers or analytics of the project's own. Hide My Email talks to the user's iCloud account, and only once it is turned on.
 
 ## Links
 
 - [Website](https://betterpasswords.app/)
 - [Optional Mac app (Touch ID unlock)](https://betterpasswords.app/companion)
+- [Using it with Bitwarden (setup, self-hosted servers, FAQ)](https://betterpasswords.app/bitwarden)
 - [Source code (MIT)](https://github.com/fanckush/better-passwords-extension)
 - [Privacy policy](https://github.com/fanckush/better-passwords-extension/blob/main/PRIVACY.md)
 - [Threat model](https://github.com/fanckush/better-passwords-extension/blob/main/docs/threat-model.md)

@@ -1,13 +1,14 @@
 # Threat model
 
-What we protect: the user's passwords in Apple Passwords, and the session that can read them.
+What we protect: the user's passwords, in Apple Passwords or Bitwarden, and whatever can read them: Apple's paired session, and Bitwarden's unlocked vault key.
 
 ## Trust boundaries
 
 | Component | Trusted? | Notes |
 |---|---|---|
 | Apple's helper and macOS | yes | Verified by macOS code signing. We never modify or wrap it. |
-| Our background worker and popup | yes | The only code that holds the session key. |
+| The Bitwarden server the user signs in to | partly | Trusted to store the vault and check the sign-in, never to read the vault: it only ever gets it encrypted. See [Bitwarden](#bitwarden). |
+| Our background worker, popup and setup page | yes | The only code that holds Apple's session key or Bitwarden's vault key. |
 | Web pages and their scripts | **no** | Never talk to the background; only receive values the user chose to fill. |
 | Other extensions | **no** | Messages from other extension IDs are refused. |
 | The local user account | mostly | Anything running as the user can already reach Apple's helper the same way we do. |
@@ -15,7 +16,7 @@ What we protect: the user's passwords in Apple Passwords, and the session that c
 ## What we rely on
 
 - **The pairing code proves the user is present.** It appears only on the Mac's screen, and SRP turns it into a key without ever sending it. We never store it.
-- **The session key stays in memory** in the background worker (a non-extractable WebCrypto key plus SRP state). It is never written to storage, and it is gone when the browser quits or the user locks.
+- **Apple's session key stays in memory** in the background worker (a non-extractable WebCrypto key plus SRP state). It is never written to storage, and it is gone when the browser quits or the user locks.
 - **Server proof.** Pairing completes only after the helper proves it derived the same key (`HAMK`, compared in constant time).
 
 ## Risks and mitigations
@@ -37,12 +38,31 @@ What we protect: the user's passwords in Apple Passwords, and the session that c
 | Hide My Email uses an undocumented iCloud web service | Background only; the menu and pages never talk to iCloud. It relies on the user's icloud.com sign-in in that browser and stores no iCloud credentials. If Apple changes the service, the feature fails visibly and nothing else is affected. |
 | A page fakes a sign-up to trigger save prompts | Only a password we filled can be saved, and only with a user-visible macOS prompt. A page can at worst cause an extra prompt. |
 
+## Bitwarden
+
+Bitwarden has no app on the computer to ask, so the extension is a Bitwarden client: it holds the account's tokens and encrypted vault, and the key that decrypts it while unlocked. That makes it as sensitive as Bitwarden's own extension. Protocol details are in [bitwarden.md](bitwarden.md).
+
+- **The master password** is typed only into our own extension pages: the setup tab, and the popup (or a small window of its own, when the popup can't open). Never into the inline menu, which lives inside a web page: the menu's unlock row opens the popup instead, so no page can overlay, frame or imitate the field. The password is used to derive the keys and dropped (the setup tab keeps it in its own memory between sign-in steps, until a code is entered). It's never stored or sent; the server gets a hash derived from it, as with Bitwarden's own apps.
+- **The vault key** (the user key) is kept in `storage.session` while unlocked: memory only, cleared when the browser quits, and closed to content scripts. It survives the background worker restarting, so MV3's worker lifecycle doesn't lock the vault. Locking, the account's lock time passing, or removing the account forgets it.
+- **On disk** (`storage.local`): the email, the server's address, the KDF settings, the server's tokens, the user key wrapped with the master password's key, and the vault as the server sent it, encrypted. None of it opens the vault without the master password.
+- **Decryption checks the MAC first.** Every encrypted value (EncString) is authenticated with HMAC-SHA256 before it's decrypted, so a tampered value is refused, not decrypted.
+- **Saving** encrypts the login on the device before it's sent. The extension asks first, with its own card in the page (Bitwarden doesn't ask by itself, unlike macOS). The card is an extension page framed like the menu, with its own nonce, and only its Save button saves.
+
+| Risk | Mitigation |
+|---|---|
+| Malware or another person reads the browser profile | It gets the encrypted vault and the server's tokens, as it would from Bitwarden's own extension. The vault can't be opened without the master password. The tokens let it reach the account through the server's API until they expire or the user signs out the device in Bitwarden (Settings → Security → Devices). |
+| A page phishes the master password with a fake unlock field | We never ask for it inside a page, so a field in a page asking for it is never ours. |
+| A page triggers the save card | Only a login the user filled or typed is offered, and only the card's own Save saves it. At worst a page causes an extra card the user dismisses. |
+| Someone on the network watches a self-hosted server on plain `http://` | Allowed only for an address the user types, after the browser asks for access to that one server. On such a connection the tokens and the password hash can be read on the way; the vault itself stays encrypted. Use `https://` wherever the server is reachable by others. |
+| Code injected into an extension page sends data out | `connect-src` allows `https:` and `http:`, since a self-hosted server can be anywhere. It used to list only Apple and Bitwarden's cloud. What keeps foreign code out is `script-src 'self'`: no remote, inline or eval'd scripts. `'wasm-unsafe-eval'` lets our own bundled WebAssembly (Argon2id, `hash-wasm`) compile; it doesn't allow JavaScript eval. |
+
 ## Known gaps
 
 - The clickjacking checks cover the known ways to hide or move the menu (`e2e/clickjacking.spec.ts`). A new CSS feature that hides content while it still takes clicks could get past them until it's added; there is no complete protection inside a page. The fullscreen case isn't tested, as headless browsers can't enter fullscreen. Users who want no such risk can turn off suggestions when signing in and fill from the toolbar popup, which no page can cover.
 - On Firefox (no IntersectionObserver v2), an overlay with `pointer-events: none` placed in the page's own *closed* shadow root and in the top layer could evade the content script's checks, which rely on hit-testing. Overlays that take clicks, transparency and revealing the menu only as the click lands are caught.
 - A page can see that our menu element exists. From that it can tell the extension is installed, and, when the menu opens, whether this site has a saved login or the session is locked. While the user types in a username field, the menu narrows its logins to those starting with the typed text and hides when none do, so the menu's size tells the page whether a saved username starts with what was typed. It reacts only to the user's own keystrokes, never to text the page puts in the field. It never sees usernames, passwords or the code. Other password managers' inline menus have the same property.
 - Logins in iframes of other sites are not offered. A frame on another host of the page's site is, which trusts every host of that site as much as the page: a site that frames a host it doesn't control (a user-content subdomain) could have that host offered its logins. Apple's helper already matches logins across a domain's hosts, so a host of the site could reach them as a page of its own anyway.
+- Bitwarden's server picks the KDF settings it tells the client to use. A malicious or impersonated server (a plain-`http://` self-hosted one, say) could ask for weak ones, making the password hash it receives cheap to guess. Bitwarden's own clients refuse settings below their minimums; ours doesn't check yet.
 - Firefox can't tell when the Mac locks (its idle API never reports "locked"), so "Lock when my Mac locks" is Chromium-only. On Firefox the session ends when Firefox quits or you press Lock.
 
 ## Touch ID companion
