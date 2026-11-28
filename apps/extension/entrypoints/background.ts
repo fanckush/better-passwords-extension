@@ -328,24 +328,29 @@ export default defineBackground(() => {
   ): Promise<AutofillStatus> {
     const { show } = await menuToShow(caller, kind, signIn);
     if (show === "none") return { show };
-    const settings = await getSettings();
-    const orGenerate = kind === "login" && unsure && settings.generatePasswords;
-    return {
-      show,
-      nonce: issueMenuNonce(caller.tabId, caller.frameId),
-      ...(orGenerate ? { orGenerate } : {}),
-      ...(settings.minimalMode ? { icon: fieldIcon() } : {}),
-    };
+    const orGenerate = kind === "login" && unsure && (await getSettings()).generatePasswords;
+    return { show, nonce: issueMenuNonce(caller.tabId, caller.frameId), ...(orGenerate ? { orGenerate } : {}) };
   }
 
-  /**
-   * Minimal mode's icon in fields: the provider's when one account can fill, ours for several. The
-   * same on every site, so it doesn't change with which account has logins there.
-   */
-  function fieldIcon(): string {
-    const filling = accounts.all.filter(unlockable);
-    const [only] = filling;
-    return filling.length === 1 && only ? only.provider : "several";
+  /** Minimal mode: whether each field would get a menu, so it gets the icon that opens one. */
+  async function menuIcons(
+    caller: Caller & { kind: "content-script" },
+    fields: { kind: FieldKind; signIn: boolean }[],
+  ): Promise<boolean[]> {
+    if (!(await getSettings()).minimalMode) return fields.map(() => false);
+    // a page has a few kinds of fields: ask once for each
+    const answers = new Map<string, Promise<boolean>>();
+    return Promise.all(
+      fields.map(({ kind, signIn }) => {
+        const key = `${kind} ${signIn}`;
+        let answer = answers.get(key);
+        if (!answer) {
+          answer = menuToShow(caller, kind, signIn).then(({ show }) => show !== "none");
+          answers.set(key, answer);
+        }
+        return answer;
+      }),
+    );
   }
 
   async function menuToShow(
@@ -947,6 +952,7 @@ export default defineBackground(() => {
     if (caller.kind === "content-script") {
       if (request.type === "autofill-status")
         return autofillStatus(caller, request.kind, request.unsure, request.signIn);
+      if (request.type === "menu-icons") return menuIcons(caller, request.fields);
       if (request.type === "generated-username") {
         trackUsername(caller, request.username);
         return null;
@@ -1311,6 +1317,7 @@ export default defineBackground(() => {
         await browser.tabs.create({ url: "https://www.icloud.com/" });
         return null;
       case "autofill-status":
+      case "menu-icons":
         throw new Error("content scripts only");
     }
   }
@@ -1441,7 +1448,8 @@ export default defineBackground(() => {
         isSameSiteFrame(sender.url, sender.tab.url)) &&
       CONTENT_SCRIPT_REQUESTS.has(request.type)
     ) {
-      if (sender.frameId !== 0 && isSameSiteFrame(sender.url, sender.tab.url)) {
+      // (icons on a page's fields say nothing about which frame the user fills: the menu they open does)
+      if (request.type !== "menu-icons" && sender.frameId !== 0 && isSameSiteFrame(sender.url, sender.tab.url)) {
         signInFrames.set(sender.tab.id, new URL(sender.url));
       } else if (request.type === "autofill-status") {
         // a field of the page's own origin has focus now

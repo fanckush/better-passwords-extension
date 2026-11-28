@@ -41,7 +41,7 @@
   background: linear-gradient(180deg, #b0b0b5, #8e8e93);
 }
 
-/* a login's source, on its icon, when logins come from more than one password manager */
+/* a login's source, on its icon (the inline menu always shows it; the popup with several password managers) */
 .tile.source {
   position: absolute;
   right: -3px;

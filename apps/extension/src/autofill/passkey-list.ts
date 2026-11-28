@@ -43,6 +43,11 @@ export function hidePasskeyList(field: Element): void {
   if (original !== null && value !== withoutToken(original)) field.removeAttribute(ATTRIBUTE_ORIGINAL);
 }
 
+/** Whether the page asks the browser for its passkey list on `field` (and it's not hidden). */
+export function asksForPasskeys(field: Element): boolean {
+  return hasToken(field.getAttribute("autocomplete") ?? "");
+}
+
 /** Whether the browser's passkey list was hidden on `field`, so the menu can offer to show it. */
 export function hasHiddenPasskeyList(field: Element): boolean {
   return field.hasAttribute(ATTRIBUTE_ORIGINAL);

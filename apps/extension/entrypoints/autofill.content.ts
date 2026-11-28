@@ -9,8 +9,10 @@ import {
   oneTimeCodeGroup,
 } from "@/src/autofill/fields.ts";
 import { MenuHost } from "@/src/autofill/menu-host.ts";
+import { MenuIcons } from "@/src/autofill/menu-icons.ts";
 import {
   ATTRIBUTE_ORIGINAL,
+  asksForPasskeys,
   hasHiddenPasskeyList,
   restorePasskeyList,
   showPasskeyListOnce,
@@ -40,10 +42,11 @@ import {
   type ContentMessage,
   type MenuMessage,
   type NewPasswordContext,
+  type Settings,
   type SignInState,
   send,
 } from "@/src/messages.ts";
-import { BRAND, PASSKEY, PROVIDER_GLYPHS } from "@/src/ui/icons.ts";
+import { PASSKEY } from "@/src/ui/icons.ts";
 import { frameOriginToFill } from "@/src/url-policy.ts";
 
 /** Omit for each member of a union. */
@@ -60,8 +63,7 @@ export default defineContentScript({
     const menu = new MenuHost(
       browser.runtime.getURL("/menu.html"),
       (above) => tellMenu({ type: "menu-placement", above }),
-      () => [passkeyIcon.element, menuIcon.element],
-      () => setTimeout(placeMenuIcon),
+      () => [passkeyIcon.element, ...menuIcons.elements()],
     );
     // the card asking to save a login (for password managers that don't ask), in the top frame only
     const saveCard = window === window.top ? new SaveCardHost(browser.runtime.getURL("/save.html")) : undefined;
@@ -79,14 +81,16 @@ export default defineContentScript({
     // the passkey icon at the end of a field whose browser passkey list is hidden: a click on it
     // opens that list at once, as the click is the field's (see field-icon.ts, and the mousedown
     // handler below). The field to show it on is the one under the mouse, else the focused one.
-    const passkeyIcon = new FieldIcon({ glyph: PASSKEY, tag: "app-passkey-icon" });
+    const passkeyIcon = new FieldIcon({ tag: "app-passkey-icon", art: PASSKEY });
     let hoveredField: HTMLInputElement | undefined;
     ctx.onInvalidated(() => passkeyIcon.hide());
-    // minimal mode: the menu never opens by itself. This icon at the end of the focused field opens
-    // it (so does ↓), on fields that would have one. It takes the passkey icon's place there: the
-    // menu offers the browser's passkey list too.
-    const menuIcon = new FieldIcon({ glyph: BRAND, tag: "app-autofill-icon" });
-    ctx.onInvalidated(() => menuIcon.hide());
+    // minimal mode (a setting): the menu never opens by itself. An icon at the end of each field that
+    // would have one opens it (so does ↓ in the field). A click in the field is the page's and the
+    // browser's, so the browser's passkey list isn't hidden then (see passkey-list.content.ts).
+    // Undefined until the settings are read: nothing opens on focus meanwhile.
+    let minimal: boolean | undefined;
+    const menuIcons = new MenuIcons((fields) => send({ type: "menu-icons", fields }));
+    ctx.onInvalidated(() => menuIcons.stop());
     // the field the mouse was last pressed on, or on its label: a focus that follows is a click's,
     // which shows the menu even with nothing saved (see the menu's "quiet")
     let pressed: HTMLInputElement | undefined;
@@ -95,8 +99,7 @@ export default defineContentScript({
     function placePasskeyIcon() {
       const focused = document.activeElement;
       const field = [hoveredField, focused].find(
-        (el): el is HTMLInputElement =>
-          el instanceof HTMLInputElement && el !== menuIcon.field && hasHiddenPasskeyList(el),
+        (el): el is HTMLInputElement => el instanceof HTMLInputElement && hasHiddenPasskeyList(el),
       );
       if (field) passkeyIcon.show(field);
       else passkeyIcon.hide();
@@ -124,18 +127,8 @@ export default defineContentScript({
       | { field: HTMLInputElement; value: string; saved: boolean; username: string; weaker: boolean }
       | undefined;
 
-    /** Hides minimal mode's icon once neither its field nor the menu has focus. */
-    function placeMenuIcon() {
-      const focused = document.activeElement;
-      if (menuIcon.field && focused !== menuIcon.field && focused !== menu.element) menuIcon.hide();
-      placePasskeyIcon();
-    }
-
-    /**
-     * `asked`: the user clicked the field or pressed ↓; on focus alone, an empty menu stays hidden.
-     * `fromIcon`: asked with minimal mode's icon (or ↓), which opens the menu that mode holds back.
-     */
-    async function offer(field: HTMLInputElement, kind: FieldKind, asked: boolean, fromIcon = false) {
+    /** `asked`: the user clicked the field or pressed ↓; on focus alone, an empty menu stays hidden. */
+    async function offer(field: HTMLInputElement, kind: FieldKind, asked: boolean) {
       if (menu.anchor === field || dismissed === field || dismissedCode.has(field) || fillingCode) return;
       if (field === browserList) return;
       // like Safari: a code is offered while the field is empty, not over one being typed
@@ -143,53 +136,39 @@ export default defineContentScript({
       const ticket = ++request;
       const unsure = kind === "login" && isUnsurePasswordField(field);
       const signIn = kind === "email" && maySignIn(field);
-      const { show, nonce, orGenerate, icon } = await send({ type: "autofill-status", kind, unsure, signIn }).catch(
-        () => ({ show: "none" as const, nonce: undefined, orGenerate: undefined, icon: undefined }),
-      );
+      const { show, nonce, orGenerate } = await send({ type: "autofill-status", kind, unsure, signIn }).catch(() => ({
+        show: "none" as const,
+        nonce: undefined,
+        orGenerate: undefined,
+      }));
       // the user may have moved on while we asked
       if (ticket !== request || document.activeElement !== field) return;
       const passkeys = hasHiddenPasskeyList(field);
       const quiet = !asked;
-      /** Opens the menu, or in minimal mode (unless asked with its icon) puts the icon on the field. */
-      const open: typeof menu.open = (...args) => {
-        if (icon === undefined || fromIcon) {
-          menu.open(...args);
-          return;
-        }
-        menu.close();
-        menuIcon.setGlyph(PROVIDER_GLYPHS[icon] ?? BRAND);
-        menuIcon.show(field);
-        placePasskeyIcon();
-      };
-      /** No menu for the field: nor minimal mode's icon. */
-      const none = () => {
-        menu.close();
-        if (menuIcon.field === field) menuIcon.hide();
-      };
       if (nonce === undefined) {
-        none();
+        menu.close();
         // no menu here, so nothing can show the browser's passkey list on request: give it back
         restorePasskeyList(field);
         placePasskeyIcon();
       } else if ((kind === "new-password" || (unsure && field === generated?.field)) && field.value !== "") {
         // our own password: say it's saved; one the user typed: stay out of the way
         if (show !== "none" && generated?.field.form === field.form && field.value === generated.value) {
-          open(field, generated.saved ? "generated" : "generated-unsaved", kind, nonce, {
+          menu.open(field, generated.saved ? "generated" : "generated-unsaved", kind, nonce, {
             weaker: generated.weaker,
           });
         } else {
-          none();
+          menu.close();
         }
       } else if (show === "email" && kind === "email") {
-        open(field, "email", kind, nonce, { logins: signIn, passkeys, quiet });
+        menu.open(field, "email", kind, nonce, { logins: signIn, passkeys, quiet });
       } else if (show === "codes" && kind === "one-time-code") {
-        open(field, "codes", kind, nonce, { quiet });
+        menu.open(field, "codes", kind, nonce, { quiet });
       } else if (show === "logins" || show === "generate" || show === "locked" || show === "setup") {
         // "locked" and "setup" too: login fields include guessed usernames, but only next to a
         // password field, and the email field is usually the first one people click
-        open(field, show, kind, nonce, { orGenerate: orGenerate ?? false, passkeys, quiet });
+        menu.open(field, show, kind, nonce, { orGenerate: orGenerate ?? false, passkeys, quiet });
       } else {
-        none();
+        menu.close();
       }
     }
 
@@ -232,28 +211,46 @@ export default defineContentScript({
     }
 
     /** Offers a menu for `target` if it gets one; returns whether it does. */
-    function offerFor(target: EventTarget | null, asked = false, fromIcon = false): boolean {
+    function offerFor(target: EventTarget | null, asked = false): boolean {
       const kind = fieldKind(target);
       if (!kind) return false;
-      void offer(target as HTMLInputElement, kind, asked, fromIcon);
+      void offer(target as HTMLInputElement, kind, asked);
       return true;
     }
 
-    /** Opens the menu minimal mode holds back on `field`, or closes it if it's open: the icon toggles it. */
+    /** Minimal mode: the icon on `field` (or ↓ there) opens its menu, or closes it if it's open. */
     function toggleFromIcon(field: HTMLInputElement) {
-      if (menu.isOpen) {
+      if (menu.isOpen && menu.anchor === field) {
         dismiss(field);
         menu.close();
         return;
       }
       dismiss(undefined);
-      // after "Use a Passkey", the icon is ours again: the browser's list waits for a click on the text
-      if (browserList === field) {
-        browserList = undefined;
-        stopShowingPasskeyList(field);
-      }
-      offerFor(field, true, true);
+      // focused by script, not a click: the browser shows no passkey list for that
+      if (document.activeElement !== field) field.focus({ preventScroll: true });
+      offerFor(field, true);
     }
+
+    /** Minimal mode on or off, from the settings; on, any change to them may change which fields get icons. */
+    function applySettings(settings: unknown) {
+      const on = (settings as Partial<Settings> | undefined)?.minimalMode === true;
+      if (on === minimal) {
+        if (on) menuIcons.refresh();
+        return;
+      }
+      minimal = on;
+      if (on) {
+        menu.close();
+        menuIcons.start();
+      } else {
+        menuIcons.stop();
+      }
+    }
+    const settingsChanged = (changes: Record<string, { newValue?: unknown }>, area: string) => {
+      if (area === "local" && changes.settings) applySettings(changes.settings.newValue);
+    };
+    browser.storage.onChanged.addListener(settingsChanged);
+    ctx.onInvalidated(() => browser.storage.onChanged.removeListener(settingsChanged));
 
     /** The field a press on `target` is for: the field itself, or the one its label is for. */
     function fieldPressed(target: EventTarget | null): HTMLInputElement | undefined {
@@ -267,23 +264,26 @@ export default defineContentScript({
       "focusin",
       (event) => {
         if (event.target === menu.element || fillingCode) return;
+        // minimal mode: focus alone opens nothing (and before the settings are read, nothing yet)
+        if (minimal !== false) {
+          if (menu.isOpen && event.target !== menu.anchor) menu.close();
+          return;
+        }
         const asked = event.target === pressed;
         pressed = undefined;
         if (event.target !== dismissed) dismissed = undefined;
         if (!dismissedCode.has(event.target as HTMLInputElement)) dismissedCode.clear();
-        if (event.target !== menuIcon.field) menuIcon.hide();
         if (!offerFor(event.target, asked) && menu.isOpen) menu.close();
         placePasskeyIcon();
       },
       { capture: true },
     );
-    ctx.addEventListener(document, "focusout", () => setTimeout(placeMenuIcon), { capture: true });
+    ctx.addEventListener(document, "focusout", () => setTimeout(placePasskeyIcon), { capture: true });
     ctx.addEventListener(
       document,
       "mouseover",
       (event) => {
         if (event.target !== passkeyIcon.field) passkeyIcon.hover(false);
-        if (event.target !== menuIcon.field) menuIcon.hover(false);
         const field = event.target instanceof HTMLInputElement ? event.target : undefined;
         if (field === hoveredField) return;
         hoveredField = field;
@@ -296,7 +296,6 @@ export default defineContentScript({
       "mousemove",
       (event) => {
         if (event.target === passkeyIcon.field) passkeyIcon.hover(passkeyIcon.hits(event.clientX, event.clientY));
-        if (event.target === menuIcon.field) menuIcon.hover(menuIcon.hits(event.clientX, event.clientY));
       },
       { capture: true, passive: true },
     );
@@ -305,15 +304,15 @@ export default defineContentScript({
       "mousedown",
       (event) => {
         const target = event.target;
-        // minimal mode's icon opens (or closes) the menu; the click is still the field's otherwise
-        if (
-          event.button === 0 &&
-          target instanceof HTMLInputElement &&
-          target === menuIcon.field &&
-          menuIcon.hits(event.clientX, event.clientY)
-        ) {
+        // minimal mode's icon opens (or closes) the menu. The click is on our own element, never the
+        // field's: the page doesn't hear of it, and the browser shows no passkey list for it.
+        const iconField = menuIcons.fieldOf(target);
+        if (iconField) {
+          if (!event.isTrusted) return;
+          event.preventDefault();
+          event.stopPropagation();
           pressed = undefined;
-          toggleFromIcon(target);
+          if (event.button === 0) toggleFromIcon(iconField);
           return;
         }
         // a click on the passkey icon is a click on its field: the browser's list opens for it, ours closes
@@ -337,7 +336,6 @@ export default defineContentScript({
           const field = browserList;
           browserList = undefined;
           stopShowingPasskeyList(field);
-          // in minimal mode, this puts the icon back on it
           offerFor(field, true);
           return;
         }
@@ -347,11 +345,16 @@ export default defineContentScript({
         pressed = event.button === 0 ? field : undefined;
         const clicked = field ?? target;
         if (menu.isOpen && clicked !== menu.element && clicked !== menu.anchor) menu.close();
+        // minimal mode: a click in a passkey field is the browser's, which shows its list over our menu
+        if (minimal && menu.isOpen && clicked === menu.anchor && asksForPasskeys(menu.anchor)) {
+          dismiss(menu.anchor);
+          menu.close();
+        }
         // clicking the field while nothing typed matches brings every login back, and shows the
         // menu that opened hidden for having nothing saved
         if (menu.isOpen && !menu.isShowing && clicked === menu.anchor) filterMenu("", true);
         // clicking a field whose menu was dismissed asks for it again (minimal mode: its icon does)
-        if (field && field !== menuIcon.field && (field === dismissed || dismissedCode.has(field))) {
+        if (!minimal && field && (field === dismissed || dismissedCode.has(field))) {
           dismiss(undefined);
           offerFor(field, true);
         }
@@ -362,10 +365,10 @@ export default defineContentScript({
       document,
       "keydown",
       (event) => {
-        // minimal mode: ↓ in a field with the icon opens its menu, as a click on the icon does
-        if (event.key === "ArrowDown" && !menu.isOpen && event.target === menuIcon.field) {
+        // minimal mode: ↓ in a field with an icon opens its menu, as a click on the icon does
+        if (minimal && event.key === "ArrowDown" && !menu.isOpen && menuIcons.has(event.target)) {
           event.preventDefault();
-          toggleFromIcon(menuIcon.field);
+          toggleFromIcon(event.target);
           return;
         }
         const wasDismissed = event.target === dismissed || dismissedCode.has(event.target as HTMLInputElement);
@@ -685,6 +688,15 @@ export default defineContentScript({
       }
     }
 
-    offerFor(document.activeElement);
+    // a field focused before the content script ran (autofocus) gets its menu now, unless minimal
+    void browser.storage.local
+      .get("settings")
+      .then(
+        ({ settings }) => applySettings(settings),
+        () => applySettings(undefined),
+      )
+      .then(() => {
+        if (!minimal) offerFor(document.activeElement);
+      });
   },
 });

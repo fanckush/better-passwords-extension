@@ -4,24 +4,24 @@
 import "./tiles.css";
 import { OTHER_PROVIDER_ISSUE_URL } from "../config.ts";
 import { h } from "./h.ts";
-import { CHEVRON_FORWARD, icon, KEY, MORE, OPEN, PROVIDER_GLYPHS } from "./icons.ts";
+import { CHEVRON_FORWARD, icon, KEY, MORE, OPEN, SHIELD } from "./icons.ts";
 
 export type ProviderId = "apple" | "bitwarden";
 
-const PROVIDERS: { id: ProviderId; name: string }[] = [
-  { id: "apple", name: "Apple Passwords" },
-  { id: "bitwarden", name: "Bitwarden" },
+const PROVIDERS: { id: ProviderId; name: string; glyph: string }[] = [
+  { id: "apple", name: "Apple Passwords", glyph: KEY },
+  { id: "bitwarden", name: "Bitwarden", glyph: SHIELD },
 ];
 
 /** The provider's tile, as on the picker and at the top of its setup. */
 export function providerTile(id: string, size: "small" | "large" = "small"): HTMLElement {
-  const glyph = PROVIDER_GLYPHS[id] ?? KEY;
+  const glyph = PROVIDERS.find((p) => p.id === id)?.glyph ?? KEY;
   return h("span", { class: `tile tile-${id} ${size}`, attrs: { "aria-hidden": "true" } }, icon(glyph));
 }
 
 /** A login's source, as a small tile on its icon: named for screen readers and on hover. */
 export function providerBadge(id: string, label: string): HTMLElement {
-  const glyph = PROVIDER_GLYPHS[id] ?? KEY;
+  const glyph = PROVIDERS.find((p) => p.id === id)?.glyph ?? KEY;
   return h(
     "span",
     { class: `tile tile-${id} source`, title: `From ${label}`, attrs: { role: "img", "aria-label": label } },

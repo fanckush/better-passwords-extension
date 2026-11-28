@@ -153,13 +153,13 @@ function row(
   detail: string,
   onChoose: () => void,
   detailClass = "detail",
-  /** The account it's from, when the list mixes several: a badge on the icon. */
+  /** The account it's from: a badge on the icon. */
   from?: AccountView,
 ): HTMLButtonElement {
   const button = h(
     "button",
     { class: "row", attrs: { role: "option" } },
-    // logins from more than one account: the popup's look, an initial with the account's badge
+    // a saved login: the popup's look, an initial with its account's badge
     from
       ? h("span", { class: "avatar" }, (title[0] ?? "?").toUpperCase(), providerBadge(from.provider, from.label))
       : icon(svgPath),
@@ -245,7 +245,7 @@ function renderLogins() {
   );
   render(
     ...shown.map(({ ref, username, account }) =>
-      row(KEY, username || "(no username)", hostname, () => void fill(ref), "detail", sources?.get(account)),
+      row(KEY, username || "(no username)", hostname, () => void fill(ref), "detail", sources.get(account)),
     ),
     focused ? othersRow(matches.length - 1, renderLogins) : null,
     error ? message(error, true) : null,
@@ -269,10 +269,12 @@ function noneSaved(hostname: string | undefined): string {
     : `No saved passwords for ${site}.`;
 }
 
-/** With logins from more than one account, the account each is from (a badge); from one, nothing. */
-function sourceAccounts(logins: { account: string }[]): Map<string, AccountView> | undefined {
+/**
+ * The account each login is from, for its badge. Shown even with one account: the menu looks like
+ * the browser's own suggestions, and the badge says whose these are.
+ */
+function sourceAccounts(logins: { account: string }[]): Map<string, AccountView> {
   const ids = new Set(logins.map((l) => l.account));
-  if (ids.size < 2) return undefined;
   return new Map(accountViews.filter((a) => ids.has(a.id)).map((a) => [a.id, a]));
 }
 
@@ -607,7 +609,7 @@ function renderEmail(suggestions: EmailSuggestions, error?: string) {
     for (const { ref, username, account } of logins.logins) {
       usernames.add(username.toLowerCase());
       if (!username.toLowerCase().startsWith(prefix)) continue;
-      const from = sources?.get(account);
+      const from = sources.get(account);
       saved.push(
         row(KEY, username || "(no username)", logins.hostname, () => void fillSavedLogin(ref), "detail", from),
       );

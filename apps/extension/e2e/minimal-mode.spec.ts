@@ -1,15 +1,29 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { choose, expect, menuFrame, PAIRING_CODE, saveSettings, test } from "./fixtures.ts";
 
 /** Whether a Better Passwords menu is open on the page. */
 const menuOpen = (page: Page) => page.frames().some((f) => f.url().includes("/menu.html#") && !f.isDetached());
 
-/** Clicks the middle of minimal mode's icon (which lets clicks through to its field). */
-async function clickIcon(page: Page) {
-  const icon = page.locator("app-autofill-icon");
-  await expect(icon).toBeVisible();
-  const box = await icon.boundingBox();
-  if (!box) throw new Error("no icon in the field");
+const autocomplete = (page: Page, selector: string) =>
+  page.locator(selector).evaluate((el) => el.getAttribute("autocomplete"));
+
+/** Minimal mode's icon on the field `selector`: the one drawn inside its box. */
+async function iconOn(page: Page, selector: string): Promise<Locator> {
+  const field = await page.locator(selector).boundingBox();
+  if (!field) throw new Error(`no field ${selector}`);
+  const icons = page.locator("app-autofill-icon");
+  await expect(icons.first()).toBeVisible();
+  for (const icon of await icons.all()) {
+    const box = await icon.boundingBox();
+    const inside = box && box.y >= field.y && box.y + box.height <= field.y + field.height + 1;
+    if (inside && box.x >= field.x && box.x + box.width <= field.x + field.width + 1) return icon;
+  }
+  throw new Error(`no icon on ${selector}`);
+}
+
+async function clickIcon(page: Page, selector: string) {
+  const box = await (await iconOn(page, selector)).boundingBox();
+  if (!box) throw new Error(`no icon on ${selector}`);
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
 }
 
@@ -17,68 +31,85 @@ test.beforeEach(async ({ context }) => {
   await saveSettings(context, { minimalMode: true });
 });
 
-test("the menu opens from the icon only, then fills as usual", async ({ context, siteUrl }) => {
+test("every field that gets a menu shows the icon, and only the icon opens the menu", async ({ context, siteUrl }) => {
   const page = await context.newPage();
   await page.goto(`${siteUrl}/login.html`);
-  await page.locator("#pass").click({ position: { x: 20, y: 10 } });
+  // before anything is clicked: the sign-in's two fields
+  await iconOn(page, "#user");
+  await iconOn(page, "#pass");
 
-  // a click in the field puts the icon there, and no menu
-  await expect(page.locator("app-autofill-icon")).toBeVisible();
+  // a click in the field opens nothing
+  await page.locator("#pass").click({ position: { x: 20, y: 10 } });
   await page.waitForTimeout(500);
   expect(menuOpen(page)).toBe(false);
 
-  await clickIcon(page);
+  await clickIcon(page, "#pass");
   const menu = await menuFrame(page);
+  await expect(page.locator("#pass")).toBeFocused();
   await choose(menu, "Unlock to fill passwords");
   await menu.getByRole("textbox", { name: "Verification code" }).fill(PAIRING_CODE);
   await choose(menu, "e2e-user");
   await expect(page.locator("#user")).toHaveValue("e2e-user");
   await expect(page.locator("#pass")).toHaveValue("e2e-pass");
-  // filled and done: the icon goes with the focus
-  await expect(page.locator("app-autofill-icon")).toHaveCount(0);
+  // the icons stay
+  await iconOn(page, "#pass");
 });
 
-test("the icon closes the menu it opened, and ↓ opens it too", async ({ context, siteUrl }) => {
+test("the icon opens the menu on a field that isn't focused, closes it, and ↓ opens it too", async ({
+  context,
+  siteUrl,
+}) => {
   const page = await context.newPage();
   await page.goto(`${siteUrl}/login.html`);
-  await page.locator("#user").click({ position: { x: 20, y: 10 } });
 
-  await clickIcon(page);
+  await clickIcon(page, "#user");
   await menuFrame(page);
-  await clickIcon(page);
+  await expect(page.locator("#user")).toBeFocused();
+  await clickIcon(page, "#user");
   await expect.poll(() => menuOpen(page)).toBe(false);
   await expect(page.locator("#user")).toBeFocused();
 
-  // a click on the field's text leaves it closed
-  await page.locator("#user").click({ position: { x: 20, y: 10 } });
-  await page.waitForTimeout(500);
-  expect(menuOpen(page)).toBe(false);
-
   await page.keyboard.press("ArrowDown");
   await menuFrame(page);
-
-  // leaving for somewhere that isn't a field closes the menu and takes the icon away
-  await page.locator("body").click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press("Escape");
   await expect.poll(() => menuOpen(page)).toBe(false);
-  await expect(page.locator("app-autofill-icon")).toHaveCount(0);
 });
 
-test("on a passkey field, the icon is ours and the menu offers the passkeys", async ({ context, siteUrl }) => {
+test("a passkey field keeps the browser's list, with our icon and no passkey icon", async ({ context, siteUrl }) => {
   const page = await context.newPage();
   await page.goto(`${siteUrl}/passkey-login.html`);
-  await page.locator("#user").click({ position: { x: 20, y: 10 } });
-
-  await expect(page.locator("app-autofill-icon")).toBeVisible();
+  await iconOn(page, "#user");
+  await page.waitForTimeout(500);
+  expect(await autocomplete(page, "#user")).toBe("username webauthn");
+  await page.locator("#user").hover();
   await expect(page.locator("app-passkey-icon")).toHaveCount(0);
-  await clickIcon(page);
-  await expect((await menuFrame(page)).getByText("Use a Passkey")).toBeVisible();
+
+  // our icon's click never reaches the field: the token stays, and the menu doesn't offer passkeys
+  await clickIcon(page, "#user");
+  const menu = await menuFrame(page);
+  await expect(menu.getByText("Unlock to fill passwords")).toBeVisible();
+  await expect(menu.getByText("Use a Passkey")).toHaveCount(0);
+  expect(await autocomplete(page, "#user")).toBe("username webauthn");
+
+  // a click in the field is the browser's (its list shows there): our menu makes way
+  await page.locator("#user").click({ position: { x: 20, y: 10 } });
+  await expect.poll(() => menuOpen(page)).toBe(false);
 });
 
-test("with minimal mode off, a click in the field opens the menu and shows no icon", async ({ context, siteUrl }) => {
+test("turning minimal mode on or off takes effect on open pages", async ({ context, siteUrl }) => {
   await saveSettings(context, { minimalMode: false });
   const page = await context.newPage();
-  await page.goto(`${siteUrl}/login.html`);
+  await page.goto(`${siteUrl}/passkey-login.html`);
+  await expect.poll(() => autocomplete(page, "#user")).toBe("username");
+  await expect(page.locator("app-autofill-icon")).toHaveCount(0);
+
+  await saveSettings(context, { minimalMode: true });
+  await iconOn(page, "#user");
+  await expect.poll(() => autocomplete(page, "#user")).toBe("username webauthn");
+
+  await saveSettings(context, { minimalMode: false });
+  await expect(page.locator("app-autofill-icon")).toHaveCount(0);
+  await expect.poll(() => autocomplete(page, "#user")).toBe("username");
   await page.locator("#pass").click();
   await menuFrame(page);
-  await expect(page.locator("app-autofill-icon")).toHaveCount(0);
 });

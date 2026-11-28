@@ -50,8 +50,3 @@ export const MORE =
 /** A person with a key: a passkey. */
 export const PASSKEY =
   "M9 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8Zm0 1.75a2.25 2.25 0 1 0 0 4.5 2.25 2.25 0 0 0 0-4.5ZM2 19.25c0-3 3.1-5.25 7-5.25 1.1 0 2.15.18 3.08.5a.75.75 0 0 1-.5 1.42A7.6 7.6 0 0 0 9 15.5c-3.3 0-5.5 1.8-5.5 3.75a.75.75 0 0 1-1.5 0ZM18 6.75a3.25 3.25 0 0 1 .75 6.41V14h1a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-1v1h.75a.5.5 0 0 1 .5.5v1a.5.5 0 0 1-.5.5h-.75v.75a.75.75 0 0 1-1.5 0v-6.59A3.25 3.25 0 0 1 18 6.75Zm0 1.75a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 0 0 0-2.5Z";
-/** The app's own mark, the key and spark of its icon in one colour: for fields filled from several accounts. */
-export const BRAND =
-  "M8.4 9.6a4.4 4.4 0 1 1 0 8.8 4.4 4.4 0 0 1 0-8.8Zm-1.2 2.8a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2ZM12.8 12.8H20a.8.8 0 0 1 .8.8v.8a.8.8 0 0 1-.8.8h-1.2V17a.6.6 0 0 1-.6.6h-.8a.6.6 0 0 1-.6-.6v-1.8h-1.2V16a.6.6 0 0 1-.6.6h-.8a.6.6 0 0 1-.6-.6v-.8h-1.8ZM17.7 4.8h1.4v1.5h1.5v1.4h-1.5v1.5h-1.4V7.7h-1.5V6.3h1.5Z";
-/** Each provider's glyph (not its logo), by provider id. */
-export const PROVIDER_GLYPHS: Readonly<Record<string, string>> = { apple: KEY, bitwarden: SHIELD };

@@ -118,17 +118,18 @@ Leaving the field takes the token out again. We can't tell whether the user has 
 ## Icons in fields
 
 An icon of ours at the end of a field is a `FieldIcon` (`apps/extension/src/autofill/field-icon.ts`), placed by the pure `fieldIconLayout` (`field-icon-layout.ts`). Both are generic: the content script decides which field gets an icon and what a click on it does. The passkey icon and minimal mode's icon use it.
-- **Clicks pass through.** The icon has `pointer-events: none`, so a click on it is the user's click on the field. The content script's capture `mousedown` asks `hits()` and acts before the browser handles the click. The page has nothing of ours to click, cover or fake clicks on.
+- **Clicks pass through** (unless it `takesClicks`, see Minimal mode). The icon has `pointer-events: none`, so a click on it is the user's click on the field. The content script's capture `mousedown` asks `hits()` and acts before the browser handles the click. The page has nothing of ours to click, cover or fake clicks on.
 - **Layout follows the field:** size from its font and height (14–20 px), inside its border and padding, clear of rounded corners, centred vertically, at the left end in a right-to-left field, in the field's text colour, faded. One icon per field so far: a second one would need an offset in `fieldIconLayout`. The layout cases are unit tested in `field-icon-layout.test.ts`, and measured on real fields in `e2e/passkey-list.spec.ts` with `e2e/pages/passkey-fields.html`.
 - **Hidden where a click wouldn't reach the field:** off screen, too small, or something of the page's on top at the icon's spot.
 - **The menu's visibility check must know about it.** The icon is in the top layer, which the check reads as the page covering the menu, so `MenuHost` takes our own top-layer elements (`ours`) to ignore. Pass any new icon's element there too.
 
 ## Minimal mode
 
-An opt-in setting (`minimalMode`, off by default) for people who don't want a menu on every field. The menu then never opens by itself: on a field that would get one, the content script puts an icon at the field's end instead, and a click on it (or ↓) opens the menu. Another click on the icon closes it.
-- **Same answer, different trigger.** The background's `autofill-status` answer is unchanged, plus `icon` in minimal mode. The content script shows the icon wherever it would have opened a menu, so the icon appears only where there's something to offer.
-- **Which icon:** the provider's glyph when one account can fill (see `PROVIDER_GLYPHS` in `ui/icons.ts`), ours (`BRAND`) for several. It depends on the connected accounts, not the site, so it looks the same everywhere.
-- **Focused field only.** The icon shows on the focused field, and stays while focus is in its menu. It replaces the passkey icon on that field, as the menu offers the browser's passkey list.
+An opt-in setting (`minimalMode`, off by default) for people who don't want a menu on every field. The menu never opens by itself then. Every field that would get one shows the extension's icon (the toolbar's) at its end instead, and a click on it (or ↓ in the field) opens the menu. Another click on the icon closes it. The icons are `MenuIcons` (`apps/extension/src/autofill/menu-icons.ts`).
+- **Same answer, asked up front.** The content script asks the background which of the page's fields would get a menu (`menu-icons`, the same check as `autofill-status` without issuing nonces), again whenever the page's fields change, and again when the settings change. Settings changes apply to open pages right away.
+- **The icon takes its own clicks.** Unlike the passkey icon, its element has `pointer-events: auto`, and the content script's capture `mousedown` takes trusted presses on it and focuses the field by script. The click never reaches the field, so the page doesn't hear of it and the browser shows no passkey list for it.
+- **A click in the field is the browser's.** The browser's passkey list isn't hidden in minimal mode (`passkey-list.content.ts`), so the passkey icon and "Use a Passkey" don't appear. A click in a passkey field closes our menu, since the browser's list shows there.
+- **Cheap to keep around.** Icons show only for fields in view (an `IntersectionObserver`). They follow their fields every frame only for a second after something changes (scroll, resize, page changes, animations, input), and otherwise check once a second.
 
 ## Filling (popup)
 

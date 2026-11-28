@@ -815,6 +815,8 @@ async function footer(status: Status, tabId?: number) {
   const option = toggleFor<Toggle>(settings, async (key, on) => {
     if (key === "hideMyEmail" && on && !(await requestHideMyEmailConsent())) return false;
     await send({ type: "set-settings", settings: { [key]: on } });
+    // the Passkeys switch shows only without minimal mode
+    if (key === "minimalMode") await refresh();
     return true;
   });
   const accountOption = (account: AccountView) =>
@@ -833,8 +835,9 @@ async function footer(status: Status, tabId?: number) {
     { class: "settings" },
     h("h2", { textContent: "Suggestions" }),
     option("inlineMenu", "When signing in", "saved passwords"),
-    // Chromium only: Firefox has no passkey list over login fields
-    ...(import.meta.env.FIREFOX
+    // Chromium only: Firefox has no passkey list over login fields. In minimal mode a click in the
+    // field is the browser's, so its list shows as usual (see passkey-list.content.ts).
+    ...(import.meta.env.FIREFOX || settings.minimalMode
       ? []
       : [option("hidePasskeyList", "Passkeys", "an icon in the field instead of the browser's list")]),
     option("oneTimeCodes", "Verification codes", "when a site asks for one"),

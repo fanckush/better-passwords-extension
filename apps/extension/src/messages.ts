@@ -143,6 +143,8 @@ export type Request =
   /** `unsure`: a password field that may be a sign-up's (see isUnsurePasswordField). */
   /** `signIn`: an email field that may sign in (see maySignIn), which lists the site's logins. */
   | { type: "autofill-status"; kind: FieldKind; unsure?: boolean; signIn?: boolean }
+  /** Minimal mode: which of these fields get its icon (those that would get a menu); none with it off. */
+  | { type: "menu-icons"; fields: { kind: FieldKind; signIn: boolean }[] }
   /** The username next to a password we generated (as it's typed). */
   | { type: "generated-username"; username: string }
   /** The field holding a password we generated went away (a dialog closed, a step moved on). */
@@ -157,6 +159,7 @@ export type Request =
 /** Requests content scripts are allowed to send. */
 export const CONTENT_SCRIPT_REQUESTS: ReadonlySet<Request["type"]> = new Set([
   "autofill-status",
+  "menu-icons",
   "generated-username",
   "generated-form-gone",
   "login-sent",
@@ -272,11 +275,6 @@ export interface AutofillStatus {
   nonce?: string;
   /** A field that may be a sign-up's: with no saved logins, suggest a strong password instead. */
   orGenerate?: boolean;
-  /**
-   * Minimal mode only: the icon put in the field instead of opening the menu. The provider's id
-   * when one account fills, "several" otherwise.
-   */
-  icon?: string;
 }
 
 export interface GeneratedPasswords {
@@ -341,6 +339,7 @@ interface Responses {
   "set-settings": Settings;
   "set-account-settings": AccountSettings;
   "autofill-status": AutofillStatus;
+  "menu-icons": boolean[];
   /** `unavailable`: why the site's rules leave nothing worth suggesting. */
   "generate-passwords": GeneratedPasswords | { unavailable: string };
   "use-generated-password": { result: NewPasswordResult };
