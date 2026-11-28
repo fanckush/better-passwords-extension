@@ -187,6 +187,11 @@ export interface Settings {
    * it (see passkey-list.ts). Takes effect on the next page load.
    */
   hidePasskeyList: boolean;
+  /**
+   * Minimal mode: suggestions never open by themselves. An icon at the end of the focused field
+   * opens them, or ↓.
+   */
+  minimalMode: boolean;
   /** The account new logins are saved to (its id); empty: the first unlocked account that saves. */
   saveNewLoginsTo: string;
 }
@@ -201,6 +206,7 @@ export const DEFAULT_SETTINGS: Settings = {
   suggestEmails: true,
   companionCodeHint: true,
   hidePasskeyList: true,
+  minimalMode: false,
   saveNewLoginsTo: "",
 };
 
@@ -266,6 +272,11 @@ export interface AutofillStatus {
   nonce?: string;
   /** A field that may be a sign-up's: with no saved logins, suggest a strong password instead. */
   orGenerate?: boolean;
+  /**
+   * Minimal mode only: the icon put in the field instead of opening the menu. The provider's id
+   * when one account fills, "several" otherwise.
+   */
+  icon?: string;
 }
 
 export interface GeneratedPasswords {

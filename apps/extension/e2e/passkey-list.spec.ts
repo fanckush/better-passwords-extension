@@ -1,5 +1,5 @@
-import type { BrowserContext, Page } from "@playwright/test";
-import { choose, expect, menuFrame, test } from "./fixtures.ts";
+import type { Page } from "@playwright/test";
+import { choose, expect, menuFrame, saveSettings, test } from "./fixtures.ts";
 
 const ROW = "Use a Passkey";
 
@@ -8,17 +8,6 @@ const autocomplete = (page: Page, selector: string) =>
 
 /** Whether a Better Passwords menu is open on the page. */
 const menuOpen = (page: Page) => page.frames().some((f) => f.url().includes("/menu.html#") && !f.isDetached());
-
-async function saveSettings(context: BrowserContext, settings: Record<string, boolean>) {
-  const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
-  type Storage = { storage: { local: { set(items: object): Promise<void>; get(key: string): Promise<object> } } };
-  const saved = await worker.evaluate(async (settings) => {
-    const { chrome } = globalThis as unknown as { chrome: Storage };
-    await chrome.storage.local.set({ settings });
-    return chrome.storage.local.get("settings");
-  }, settings);
-  expect(saved).toEqual({ settings });
-}
 
 test("hides the browser's passkey list on a field that asks for it, and shows it once from the menu", async ({
   context,

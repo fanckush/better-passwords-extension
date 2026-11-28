@@ -100,6 +100,8 @@ export class MenuHost {
     private readonly menuUrl: string,
     private readonly onPlacement: (above: boolean) => void = () => {},
     private readonly ours: () => readonly Element[] = () => [],
+    /** After the menu closes. Focus inside it is gone with it, and no `focusout` says so. */
+    private readonly onClose: () => void = () => {},
   ) {
     this.#host = document.createElement("app-autofill-menu");
     this.#host.setAttribute("popover", "manual");
@@ -281,6 +283,7 @@ export class MenuHost {
     this.#frame = undefined;
     this.#shadow.replaceChildren();
     this.#host.remove();
+    this.onClose();
   }
 
   #applyStyle(extra: Record<string, string> = {}): void {

@@ -328,8 +328,24 @@ export default defineBackground(() => {
   ): Promise<AutofillStatus> {
     const { show } = await menuToShow(caller, kind, signIn);
     if (show === "none") return { show };
-    const orGenerate = kind === "login" && unsure && (await getSettings()).generatePasswords;
-    return { show, nonce: issueMenuNonce(caller.tabId, caller.frameId), ...(orGenerate ? { orGenerate } : {}) };
+    const settings = await getSettings();
+    const orGenerate = kind === "login" && unsure && settings.generatePasswords;
+    return {
+      show,
+      nonce: issueMenuNonce(caller.tabId, caller.frameId),
+      ...(orGenerate ? { orGenerate } : {}),
+      ...(settings.minimalMode ? { icon: fieldIcon() } : {}),
+    };
+  }
+
+  /**
+   * Minimal mode's icon in fields: the provider's when one account can fill, ours for several. The
+   * same on every site, so it doesn't change with which account has logins there.
+   */
+  function fieldIcon(): string {
+    const filling = accounts.all.filter(unlockable);
+    const [only] = filling;
+    return filling.length === 1 && only ? only.provider : "several";
   }
 
   async function menuToShow(

@@ -43,6 +43,8 @@ export interface FieldIconOptions {
 
 export class FieldIcon {
   readonly #host: HTMLElement;
+  readonly #shadow: ShadowRoot;
+  #glyph = "";
   #field: HTMLInputElement | undefined;
   #followFrame: number | undefined;
   #hovered = false;
@@ -54,13 +56,20 @@ export class FieldIcon {
   constructor({ glyph, tag }: FieldIconOptions) {
     this.#host = document.createElement(tag);
     this.#host.setAttribute("popover", "manual");
-    const shadow = this.#host.attachShadow({ mode: "closed" });
+    this.#shadow = this.#host.attachShadow({ mode: "closed" });
+    this.setGlyph(glyph);
+    this.#applyStyle({ visibility: "hidden" });
+  }
+
+  /** Draws another glyph (an SVG path from ui/icons.ts). */
+  setGlyph(glyph: string): void {
+    if (glyph === this.#glyph) return;
+    this.#glyph = glyph;
     const svg = icon(glyph);
     svg.setAttribute("width", "100%");
     svg.setAttribute("height", "100%");
     svg.style.setProperty("display", "block", "important");
-    shadow.append(svg);
-    this.#applyStyle({ visibility: "hidden" });
+    this.#shadow.replaceChildren(svg);
   }
 
   /** The icon's own element (in the top layer while it shows). */

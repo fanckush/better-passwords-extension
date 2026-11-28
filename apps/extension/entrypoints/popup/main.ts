@@ -840,6 +840,7 @@ async function footer(status: Status, tabId?: number) {
     option("oneTimeCodes", "Verification codes", "when a site asks for one"),
     option("generatePasswords", "When signing up", "strong passwords and emails"),
     option("hideMyEmail", "Hide My Email", "iCloud+ addresses, labeled with the site's name"),
+    option("minimalMode", "Minimal mode", "an icon in the field opens suggestions"),
     // the companion app is Mac only, and for Apple Passwords; elsewhere there's nothing to offer
     ...(status.companion === "unavailable" || !apple || !usable(apple)
       ? []

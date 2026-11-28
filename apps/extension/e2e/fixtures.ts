@@ -143,6 +143,18 @@ export async function choose(menu: Frame, text: string): Promise<void> {
   await item.click();
 }
 
+/** Saves the extension's settings directly, as the popup would. */
+export async function saveSettings(context: BrowserContext, settings: Record<string, boolean>): Promise<void> {
+  const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
+  type Storage = { storage: { local: { set(items: object): Promise<void>; get(key: string): Promise<object> } } };
+  const saved = await worker.evaluate(async (settings) => {
+    const { chrome } = globalThis as unknown as { chrome: Storage };
+    await chrome.storage.local.set({ settings });
+    return chrome.storage.local.get("settings");
+  }, settings);
+  expect(saved).toEqual({ settings });
+}
+
 /** Entries of one type from the fake helper's log. */
 function helperLog(context: BrowserContext, type: string): Record<string, unknown>[] {
   let text = "";
